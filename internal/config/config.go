@@ -11,8 +11,9 @@ import (
 
 type Config struct {
 	// Database
-	DatabaseURL       string
-	DatabaseDirectURL string
+	DatabaseURL        string // transaction-mode pooler (API queries)
+	DatabaseDirectURL  string // direct connection (local worker only)
+	DatabaseSessionURL string // session-mode pooler (River insert from API on Render)
 
 	// Security
 	EncryptionKey string
@@ -52,6 +53,7 @@ func Load() (*Config, error) {
 		// Required
 		DatabaseURL:          os.Getenv("DATABASE_URL"),
 		DatabaseDirectURL:    os.Getenv("DATABASE_DIRECT_URL"),
+		DatabaseSessionURL:   os.Getenv("DATABASE_SESSION_URL"),
 		EncryptionKey:        os.Getenv("ENCRYPTION_KEY"),
 		ShopifyClientID:      os.Getenv("SHOPIFY_CLIENT_ID"),
 		ShopifySecretKey:     os.Getenv("SHOPIFY_SECRET_KEY"),

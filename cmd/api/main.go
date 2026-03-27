@@ -40,9 +40,15 @@ func main() {
 	}
 	defer pool.Close()
 
-	// River needs a direct connection — its internal queries break with the
-	// transaction pooler's simple protocol. Use a small dedicated pool.
-	riverPool, err := db.NewPool(ctx, cfg.DatabaseDirectURL, false)
+	// River needs a connection that supports prepared statements — the transaction
+	// pooler's simple protocol breaks River's internal queries.
+	// On Render: use DATABASE_SESSION_URL (Supabase session-mode pooler, port 5432).
+	// Locally: fall back to DATABASE_DIRECT_URL.
+	riverDSN := cfg.DatabaseSessionURL
+	if riverDSN == "" {
+		riverDSN = cfg.DatabaseDirectURL
+	}
+	riverPool, err := db.NewPool(ctx, riverDSN, false)
 	if err != nil {
 		slog.Error("river db connect failed", "err", err)
 		os.Exit(1)

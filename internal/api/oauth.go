@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -111,13 +112,12 @@ func (h *Handler) OAuthCallback(c echo.Context) error {
 	}
 
 	// Enqueue initial high-priority scan + product sync
-	_, err = h.River.InsertMany(c.Request().Context(), []river.InsertManyParams{
+	if _, err = h.River.InsertMany(c.Request().Context(), []river.InsertManyParams{
 		{Args: jobs.ProductSyncJobArgs{MerchantID: merchant.ID, Full: true}},
 		{Args: jobs.ScanJobArgs{MerchantID: merchant.ID, Priority: "high"}},
-	})
-	if err != nil {
-		// Non-fatal — jobs can be triggered manually
-		_ = err
+	}); err != nil {
+		// Non-fatal — log so we can diagnose if jobs are missing
+		slog.Error("oauth: failed to enqueue initial jobs", "merchant_id", merchant.ID, "err", err)
 	}
 
 	// Issue a signed JWT so the token can't be forged by knowing the shop domain

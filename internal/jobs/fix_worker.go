@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -140,8 +141,11 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 		}
 		applyErr = shopify.UpdateDescription(ctx, merchant.ShopDomain, token, f.TargetGID, gen.Description)
 	default:
-		// faq, schema, listing: require manual action for now
-		// Mark as applied so we don't retry endlessly
+		// faq, schema, listing cannot be auto-applied via API — mark as manual
+		// so the merchant knows the fix was acknowledged but needs manual action.
+		slog.Info("fix apply: manual action required",
+			"fix_id", f.ID, "fix_type", f.FixType, "merchant_id", job.Args.MerchantID)
+		return store.SetFixStatus(ctx, w.db, f.ID, "manual")
 	}
 
 	if applyErr != nil {

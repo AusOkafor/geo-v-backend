@@ -1,0 +1,172 @@
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/yourname/geo-backend/internal/crypto"
+	"github.com/yourname/geo-backend/internal/fix"
+	"github.com/yourname/geo-backend/internal/shopify"
+	"github.com/yourname/geo-backend/internal/store"
+)
+
+// FixGenerationWorker creates pending_fixes from scan gaps using Claude.
+type FixGenerationWorker struct {
+	river.WorkerDefaults[FixGenerationJobArgs]
+	db        *pgxpool.Pool
+	generator *fix.Generator
+}
+
+func NewFixGenerationWorker(db *pgxpool.Pool, anthropicKey string) *FixGenerationWorker {
+	return &FixGenerationWorker{
+		db:        db,
+		generator: fix.NewGenerator(anthropicKey),
+	}
+}
+
+func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenerationJobArgs]) error {
+	merchant, err := store.GetMerchant(ctx, w.db, job.Args.MerchantID)
+	if err != nil {
+		return err
+	}
+	if !merchant.Active {
+		return nil
+	}
+
+	// Get latest visibility scores
+	scores, err := store.GetVisibilityScores(ctx, w.db, merchant.ID, 30)
+	if err != nil {
+		return err
+	}
+
+	// Get competitor names from citation records
+	comps, err := store.GetCompetitors(ctx, w.db, merchant.ID)
+	if err != nil {
+		comps = nil // non-fatal
+	}
+	competitorNames := make([]string, 0, len(comps))
+	for _, c := range comps {
+		competitorNames = append(competitorNames, c.Name)
+	}
+
+	// Find platforms with score < 15% and no pending fix of that type
+	existingFixes, _ := store.GetFixes(ctx, w.db, merchant.ID, "pending")
+	existingTypes := map[fix.FixType]bool{}
+	for _, f := range existingFixes {
+		existingTypes[fix.FixType(f.FixType)] = true
+	}
+
+	for _, score := range scores {
+		if score.Score >= 15 {
+			continue
+		}
+		_ = score // score is used for its Score field in the condition above
+
+		// Generate one fix per gap type (avoid duplicates)
+		for _, fixType := range []fix.FixType{fix.FixDescription, fix.FixFAQ, fix.FixSchema} {
+			if existingTypes[fixType] {
+				continue
+			}
+
+			result, err := w.generator.Generate(ctx, fix.GenerateInput{
+				BrandName:   merchant.BrandName,
+				Category:    merchant.Category,
+				Competitors: competitorNames,
+				FixType:     fixType,
+			})
+			if err != nil {
+				continue // skip failed generation
+			}
+
+			_, err = store.InsertFix(ctx, w.db, store.Fix{
+				MerchantID:  merchant.ID,
+				FixType:     string(fixType),
+				Priority:    priorityForType(fixType),
+				Title:       result.Title,
+				Explanation: result.Explanation,
+				Generated:   result.Generated,
+				EstImpact:   fix.EstImpact(fixType),
+			})
+			if err != nil {
+				return fmt.Errorf("fix gen: insert fix: %w", err)
+			}
+			existingTypes[fixType] = true
+		}
+	}
+
+	return nil
+}
+
+// FixApplyWorker applies an approved fix directly to Shopify.
+type FixApplyWorker struct {
+	river.WorkerDefaults[FixApplyJobArgs]
+	db            *pgxpool.Pool
+	encryptionKey []byte
+}
+
+func NewFixApplyWorker(db *pgxpool.Pool, encKey []byte) *FixApplyWorker {
+	return &FixApplyWorker{db: db, encryptionKey: encKey}
+}
+
+func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArgs]) error {
+	f, err := store.GetFix(ctx, w.db, job.Args.MerchantID, job.Args.FixID)
+	if err != nil {
+		return fmt.Errorf("fix apply: load fix: %w", err)
+	}
+	if f.Status != "approved" {
+		return nil // already applied or rejected
+	}
+
+	merchant, err := store.GetMerchant(ctx, w.db, job.Args.MerchantID)
+	if err != nil {
+		return fmt.Errorf("fix apply: load merchant: %w", err)
+	}
+
+	token, err := crypto.Decrypt(merchant.AccessTokenEnc, w.encryptionKey)
+	if err != nil {
+		return fmt.Errorf("fix apply: decrypt token: %w", err)
+	}
+
+	var applyErr error
+	switch fix.FixType(f.FixType) {
+	case fix.FixDescription:
+		// Extract new description from generated JSONB
+		var gen struct {
+			Description string `json:"description"`
+		}
+		if err := unmarshalJSON(f.Generated, &gen); err != nil || gen.Description == "" {
+			applyErr = fmt.Errorf("fix apply: no description in generated content")
+			break
+		}
+		applyErr = shopify.UpdateDescription(ctx, merchant.ShopDomain, token, f.TargetGID, gen.Description)
+	default:
+		// faq, schema, listing: require manual action for now
+		// Mark as applied so we don't retry endlessly
+	}
+
+	if applyErr != nil {
+		_ = store.SetFixStatus(ctx, w.db, f.ID, "failed")
+		return applyErr
+	}
+
+	return store.SetFixStatus(ctx, w.db, f.ID, "applied")
+}
+
+func priorityForType(t fix.FixType) string {
+	switch t {
+	case fix.FixDescription, fix.FixFAQ:
+		return "high"
+	default:
+		return "medium"
+	}
+}
+
+func unmarshalJSON(data []byte, v any) error {
+	if len(data) == 0 {
+		return fmt.Errorf("empty JSON")
+	}
+	return json.Unmarshal(data, v)
+}

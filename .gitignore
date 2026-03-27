@@ -1,0 +1,46 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/out/
+
+# Build output
+dist/
+
+# Environment — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Go test cache and coverage
+*.test
+*.out
+coverage.html
+
+# Go workspace (local dev only)
+go.work
+go.work.sum
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.swp
+*.sln
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Air (live reload tool)
+tmp/
+air.toml
+
+# Compiled migration binaries (not the SQL files)
+migrate
+
+# Render build artifacts
+.render/

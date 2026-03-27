@@ -1,0 +1,99 @@
+services:
+  # ─── API web service ───────────────────────────────────────────────────────
+  - type: web
+    name: geo-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: /bin/api
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false   # Supabase transaction pooler URL — set in Render dashboard
+      - key: DATABASE_DIRECT_URL
+        sync: false   # Supabase direct URL — set in Render dashboard
+      - key: ENCRYPTION_KEY
+        sync: false   # 32-char AES key
+      - key: SHOPIFY_CLIENT_ID
+        sync: false
+      - key: SHOPIFY_SECRET_KEY
+        sync: false
+      - key: SHOPIFY_WEBHOOK_SECRET
+        sync: false
+      - key: OPENAI_KEY
+        sync: false
+      - key: PERPLEXITY_KEY
+        sync: false
+      - key: GEMINI_KEY
+        sync: false
+      - key: ANTHROPIC_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+    # Run DB migrations before each deploy
+    preDeployCommand: >
+      migrate -path /migrations -database $DATABASE_URL up &&
+      river migrate-up --database-url $DATABASE_URL
+
+  # ─── Background worker ────────────────────────────────────────────────────
+  - type: worker
+    name: geo-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: /bin/worker
+    plan: standard
+    region: oregon
+    envVars:
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: ENVIRONMENT
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: DATABASE_DIRECT_URL
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: DATABASE_URL
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: ENCRYPTION_KEY
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: SHOPIFY_CLIENT_ID
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: SHOPIFY_SECRET_KEY
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: SHOPIFY_WEBHOOK_SECRET
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: OPENAI_KEY
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: PERPLEXITY_KEY
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: GEMINI_KEY
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: ANTHROPIC_KEY
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: SENTRY_DSN

@@ -1,0 +1,46 @@
+package api
+
+import (
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/labstack/echo/v4"
+	"github.com/riverqueue/river"
+	"github.com/yourname/geo-backend/internal/config"
+)
+
+// Handler holds all dependencies for HTTP handlers.
+type Handler struct {
+	DB          *pgxpool.Pool
+	River       *river.Client[pgx.Tx]
+	Config      *config.Config
+}
+
+// RegisterRoutes registers all API routes on the Echo instance.
+func (h *Handler) RegisterRoutes(e *echo.Echo) {
+	// Public
+	e.GET("/health", h.Health)
+
+	// Shopify OAuth
+	e.GET("/oauth/begin", h.OAuthBegin)
+	e.GET("/oauth/callback", h.OAuthCallback)
+
+	// Shopify webhooks (must be public — Shopify can't send auth headers)
+	wh := e.Group("/webhooks/shopify")
+	wh.POST("/app/uninstalled", h.WebhookAppUninstalled)
+	wh.POST("/products/update", h.WebhookProductsUpdate)
+	wh.POST("/products/create", h.WebhookProductsCreate)
+	wh.POST("/customers/data_request", h.WebhookGDPRDataRequest)
+	wh.POST("/customers/redact", h.WebhookGDPRCustomerRedact)
+	wh.POST("/shop/redact", h.WebhookGDPRShopRedact)
+
+	// Authenticated dashboard API
+	api := e.Group("/api/v1", sessionAuth(h.Config))
+	api.GET("/merchant", h.GetMerchant)
+	api.GET("/visibility/scores", h.GetVisibilityScores)
+	api.GET("/visibility/daily", h.GetDailyScores)
+	api.GET("/competitors", h.GetCompetitors)
+	api.GET("/fixes", h.GetFixes)
+	api.GET("/fixes/:id", h.GetFix)
+	api.POST("/fixes/:id/approve", h.ApproveFix)
+	api.POST("/fixes/:id/reject", h.RejectFix)
+}

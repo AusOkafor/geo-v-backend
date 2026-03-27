@@ -36,6 +36,7 @@ type Config struct {
 	// App
 	Port            string
 	Environment     string
+	AppURL          string
 	ScanWorkerCount int
 	ScanBatchSize   int
 }
@@ -60,8 +61,9 @@ func Load() (*Config, error) {
 		AnthropicKey:         os.Getenv("ANTHROPIC_KEY"),
 
 		// Optional with defaults
-		Port:         envOrDefault("PORT", "8081"),
-		Environment:  envOrDefault("ENVIRONMENT", "development"),
+		Port:             envOrDefault("PORT", "8081"),
+		Environment:      envOrDefault("ENVIRONMENT", "development"),
+		AppURL:           envOrDefault("APP_URL", "https://geo-visibility-eight.vercel.app"),
 		ShopifyAppHandle: envOrDefault("SHOPIFY_APP_HANDLE", "geo-visibility"),
 
 		// Optional billing

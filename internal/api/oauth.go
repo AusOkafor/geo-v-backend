@@ -45,12 +45,11 @@ func (h *Handler) OAuthBegin(c echo.Context) error {
 		Path:     "/",
 	})
 
-	redirectURI := fmt.Sprintf("%s/oauth/callback", h.Config.ShopifyAppHandle)
-	// Use full URL in production
+	var redirectURI string
 	if h.Config.IsProd() {
-		redirectURI = "https://geo-api.onrender.com/oauth/callback"
+		redirectURI = "https://geo-v-backend.onrender.com/oauth/callback"
 	} else {
-		redirectURI = "http://localhost:8080/oauth/callback"
+		redirectURI = "http://localhost:8081/oauth/callback"
 	}
 
 	authURL := shopify.BuildAuthURL(shop, h.Config.ShopifyClientID, redirectURI, state)
@@ -109,9 +108,9 @@ func (h *Handler) OAuthCallback(c echo.Context) error {
 		_ = err
 	}
 
-	// Redirect merchant into the app
+	// Redirect merchant into the frontend dashboard with their session token
 	return c.Redirect(http.StatusFound,
-		fmt.Sprintf("https://%s/admin/apps/%s", shop, h.Config.ShopifyAppHandle))
+		fmt.Sprintf("%s/auth/callback?token=%s", h.Config.AppURL, shop))
 }
 
 // insertManyRiver is a type assertion helper for the generic River client.

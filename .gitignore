@@ -39,8 +39,8 @@ Thumbs.db
 tmp/
 air.toml
 
-# Compiled migration binaries (not the SQL files)
-migrate
+# Compiled migration binary at repo root (not the cmd/migrate package)
+/migrate
 
 # Render build artifacts
 .render/

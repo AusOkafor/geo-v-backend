@@ -33,7 +33,7 @@ func main() {
 	ctx := context.Background()
 
 	// DB pool (transaction pooler URL for API)
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL, true) // true = simple protocol for Supabase pooler
 	if err != nil {
 		slog.Error("db connect failed", "err", err)
 		os.Exit(1)

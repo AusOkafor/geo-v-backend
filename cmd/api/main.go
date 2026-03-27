@@ -64,7 +64,7 @@ func main() {
 	e.Use(middleware.TimeoutWithConfig(middleware.TimeoutConfig{
 		Timeout: 30 * time.Second,
 	}))
-	corsOrigins := []string{"https://*.myshopify.com", "https://geo-app.vercel.app"}
+	corsOrigins := []string{"https://*.myshopify.com", "https://geo-visibility-eight.vercel.app"}
 	if !cfg.IsProd() {
 		corsOrigins = []string{"*"}
 	}

@@ -1,6 +1,9 @@
 FROM golang:1.23-alpine AS builder
 WORKDIR /app
 
+# Install tzdata so we can copy zoneinfo into the scratch image
+RUN apk add --no-cache tzdata ca-certificates
+
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -17,7 +20,7 @@ RUN mkdir -p /migrations && cp -r migrations/* /migrations/
 FROM scratch
 
 # TLS certificates for HTTPS calls to AI APIs and Shopify
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 # Timezone data for scheduler (time.Local in periodic jobs)
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo

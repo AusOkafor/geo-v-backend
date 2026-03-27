@@ -10,20 +10,20 @@ import (
 
 // Fix mirrors the pending_fixes table.
 type Fix struct {
-	ID          int64
-	MerchantID  int64
-	TargetGID   string
-	FixType     string
-	Priority    string
-	Title       string
-	Explanation string
-	Original    []byte // JSONB
-	Generated   []byte // JSONB
-	EstImpact   int
-	Status      string
-	AppliedAt   *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          int64      `json:"id"`
+	MerchantID  int64      `json:"merchant_id"`
+	TargetGID   string     `json:"target_gid"`
+	FixType     string     `json:"fix_type"`
+	Priority    string     `json:"priority"`
+	Title       string     `json:"title"`
+	Explanation string     `json:"explanation"`
+	Original    []byte     `json:"original"`
+	Generated   []byte     `json:"generated"`
+	EstImpact   int        `json:"est_impact"`
+	Status      string     `json:"status"`
+	AppliedAt   *time.Time `json:"applied_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // GetFixes returns fixes for a merchant, optionally filtered by status.

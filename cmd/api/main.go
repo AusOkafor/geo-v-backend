@@ -32,7 +32,7 @@ func main() {
 
 	ctx := context.Background()
 
-	// DB pool (transaction pooler URL for API)
+	// DB pool (transaction pooler URL for API queries)
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL, true) // true = simple protocol for Supabase pooler
 	if err != nil {
 		slog.Error("db connect failed", "err", err)
@@ -40,8 +40,17 @@ func main() {
 	}
 	defer pool.Close()
 
+	// River needs a direct connection — its internal queries break with the
+	// transaction pooler's simple protocol. Use a small dedicated pool.
+	riverPool, err := db.NewPool(ctx, cfg.DatabaseDirectURL, false)
+	if err != nil {
+		slog.Error("river db connect failed", "err", err)
+		os.Exit(1)
+	}
+	defer riverPool.Close()
+
 	// River client (insert-only, no workers in this binary)
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	riverClient, err := river.NewClient(riverpgxv5.New(riverPool), &river.Config{})
 	if err != nil {
 		slog.Error("river client init failed", "err", err)
 		os.Exit(1)

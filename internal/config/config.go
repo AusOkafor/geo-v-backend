@@ -37,6 +37,7 @@ type Config struct {
 	Port            string
 	Environment     string
 	AppURL          string
+	MockAI          bool // set MOCK_AI=true to skip real API calls (dev/staging)
 	ScanWorkerCount int
 	ScanBatchSize   int
 }
@@ -65,6 +66,7 @@ func Load() (*Config, error) {
 		Environment:      envOrDefault("ENVIRONMENT", "development"),
 		AppURL:           envOrDefault("APP_URL", "https://geo-visibility-eight.vercel.app"),
 		ShopifyAppHandle: envOrDefault("SHOPIFY_APP_HANDLE", "geo-visibility"),
+		MockAI:           os.Getenv("MOCK_AI") == "true",
 
 		// Optional billing
 		StripeSecretKey:     os.Getenv("STRIPE_SECRET_KEY"),

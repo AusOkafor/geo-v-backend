@@ -13,18 +13,15 @@ import (
 	"github.com/yourname/geo-backend/internal/store"
 )
 
-// FixGenerationWorker creates pending_fixes from scan gaps using Claude.
+// FixGenerationWorker creates pending_fixes from scan gaps using Claude (or mock).
 type FixGenerationWorker struct {
 	river.WorkerDefaults[FixGenerationJobArgs]
 	db        *pgxpool.Pool
-	generator *fix.Generator
+	generator fix.Generatable
 }
 
-func NewFixGenerationWorker(db *pgxpool.Pool, anthropicKey string) *FixGenerationWorker {
-	return &FixGenerationWorker{
-		db:        db,
-		generator: fix.NewGenerator(anthropicKey),
-	}
+func NewFixGenerationWorker(db *pgxpool.Pool, generator fix.Generatable) *FixGenerationWorker {
+	return &FixGenerationWorker{db: db, generator: generator}
 }
 
 func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenerationJobArgs]) error {

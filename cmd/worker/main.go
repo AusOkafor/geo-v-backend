@@ -11,9 +11,11 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/yourname/geo-backend/internal/config"
 	"github.com/yourname/geo-backend/internal/db"
+	"github.com/yourname/geo-backend/internal/fix"
 	"github.com/yourname/geo-backend/internal/jobs"
 	"github.com/yourname/geo-backend/internal/platform"
 	"github.com/yourname/geo-backend/internal/platform/gemini"
+	"github.com/yourname/geo-backend/internal/platform/mock"
 	"github.com/yourname/geo-backend/internal/platform/openai"
 	"github.com/yourname/geo-backend/internal/platform/perplexity"
 )
@@ -40,11 +42,24 @@ func main() {
 
 	encKey := []byte(cfg.EncryptionKey)
 
-	// AI clients
-	aiClients := []platform.AIClient{
-		openai.New(cfg.OpenAIKey),
-		perplexity.New(cfg.PerplexityKey),
-		gemini.New(cfg.GeminiKey),
+	// AI clients — use mocks when MOCK_AI=true to avoid API costs in dev/staging
+	var aiClients []platform.AIClient
+	var fixGenerator fix.Generatable
+	if cfg.MockAI {
+		slog.Info("MOCK_AI enabled — using mock AI clients (no real API calls)")
+		aiClients = []platform.AIClient{
+			mock.New("chatgpt"),
+			mock.New("perplexity"),
+			mock.New("gemini"),
+		}
+		fixGenerator = fix.NewMockGenerator()
+	} else {
+		aiClients = []platform.AIClient{
+			openai.New(cfg.OpenAIKey),
+			perplexity.New(cfg.PerplexityKey),
+			gemini.New(cfg.GeminiKey),
+		}
+		fixGenerator = fix.NewGenerator(cfg.AnthropicKey)
 	}
 
 	// Build River workers
@@ -52,7 +67,7 @@ func main() {
 	river.AddWorker(workers, jobs.NewScanWorker(pool, aiClients))
 	river.AddWorker(workers, jobs.NewProductSyncWorker(pool, encKey))
 	river.AddWorker(workers, jobs.NewDataDeletionWorker(pool))
-	river.AddWorker(workers, jobs.NewFixGenerationWorker(pool, cfg.AnthropicKey))
+	river.AddWorker(workers, jobs.NewFixGenerationWorker(pool, fixGenerator))
 	river.AddWorker(workers, jobs.NewFixApplyWorker(pool, encKey))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{

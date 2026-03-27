@@ -77,6 +77,11 @@ type claudeResponse struct {
 	} `json:"content"`
 }
 
+// Generatable is implemented by both Generator (real) and MockGenerator (dev/staging).
+type Generatable interface {
+	Generate(ctx context.Context, in GenerateInput) (*GenerateResult, error)
+}
+
 // Generator calls the Claude API to produce optimization fixes.
 type Generator struct {
 	apiKey string

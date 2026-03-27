@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 	"github.com/riverqueue/river"
+	"github.com/yourname/geo-backend/internal/auth"
 	"github.com/yourname/geo-backend/internal/crypto"
 	"github.com/yourname/geo-backend/internal/jobs"
 	"github.com/yourname/geo-backend/internal/shopify"
@@ -120,10 +120,14 @@ func (h *Handler) OAuthCallback(c echo.Context) error {
 		_ = err
 	}
 
+	// Issue a signed JWT so the token can't be forged by knowing the shop domain
+	jwtToken, err := auth.Issue(shop, []byte(h.Config.EncryptionKey))
+	if err != nil {
+		return fmt.Errorf("oauth: issue token: %w", err)
+	}
+
 	// Redirect merchant into the frontend dashboard with their session token
 	return c.Redirect(http.StatusFound,
-		fmt.Sprintf("%s/auth/callback?token=%s", h.Config.AppURL, shop))
+		fmt.Sprintf("%s/auth/callback?token=%s", h.Config.AppURL, jwtToken))
 }
 
-// insertManyRiver is a type assertion helper for the generic River client.
-func insertManyRiver(rc *river.Client[pgx.Tx]) *river.Client[pgx.Tx] { return rc }

@@ -104,12 +104,12 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	}
 
 	payload, _ := json.Marshal(reqBody)
-	url := fmt.Sprintf("%s?key=%s", endpoint, c.apiKey)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return platform.CitationResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", c.apiKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {

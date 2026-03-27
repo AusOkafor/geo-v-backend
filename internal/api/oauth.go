@@ -22,9 +22,13 @@ func (h *Handler) OAuthBegin(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing shop param")
 	}
 
-	// Verify HMAC on the install request
-	if !shopify.VerifyOAuthHMAC(c.QueryParams(), h.Config.ShopifySecretKey) {
-		return echo.NewHTTPError(http.StatusForbidden, "invalid HMAC")
+	// Verify HMAC only when Shopify initiates the install (hmac param present).
+	// When the merchant clicks "Connect Store" on our own frontend, there is no
+	// hmac — we skip the check since we control the redirect ourselves.
+	if c.QueryParam("hmac") != "" {
+		if !shopify.VerifyOAuthHMAC(c.QueryParams(), h.Config.ShopifySecretKey) {
+			return echo.NewHTTPError(http.StatusForbidden, "invalid HMAC")
+		}
 	}
 
 	// Generate random state for CSRF protection

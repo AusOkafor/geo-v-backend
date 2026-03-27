@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
@@ -20,6 +21,13 @@ func (h *Handler) OAuthBegin(c echo.Context) error {
 	shop := c.QueryParam("shop")
 	if shop == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing shop param")
+	}
+	// Normalise: strip protocol prefix, ensure exactly one .myshopify.com suffix
+	shop = strings.TrimPrefix(shop, "https://")
+	shop = strings.TrimPrefix(shop, "http://")
+	shop = strings.TrimSuffix(shop, "/")
+	if !strings.HasSuffix(shop, ".myshopify.com") {
+		shop = shop + ".myshopify.com"
 	}
 
 	// Verify HMAC only when Shopify initiates the install (hmac param present).

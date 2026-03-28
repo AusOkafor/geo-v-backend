@@ -20,6 +20,10 @@ type ScanWorker struct {
 	clients []platform.AIClient
 }
 
+func (w *ScanWorker) Timeout(_ *river.Job[ScanJobArgs]) time.Duration {
+	return 20 * time.Minute // real LLM calls can be slow; override River's default
+}
+
 func NewScanWorker(db *pgxpool.Pool, clients []platform.AIClient) *ScanWorker {
 	return &ScanWorker{db: db, clients: clients}
 }

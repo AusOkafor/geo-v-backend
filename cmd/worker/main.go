@@ -71,9 +71,9 @@ func main() {
 	} else if cfg.TogetherKey != "" {
 		slog.Info("TOGETHER_KEY set — using Together.ai for all scan platforms")
 		aiClients = []platform.AIClient{
-			together.New(cfg.TogetherKey, "chatgpt", "meta-llama/Llama-3.3-70B-Instruct-Turbo"),
-			together.New(cfg.TogetherKey, "perplexity", "mistralai/Mixtral-8x7B-Instruct-v0.1"),
-			together.New(cfg.TogetherKey, "gemini", "google/gemma-2-9b-it"),
+			together.New(cfg.TogetherKey, "chatgpt", "meta-llama/Llama-3.2-3B-Instruct-Turbo"),
+			together.New(cfg.TogetherKey, "perplexity", "meta-llama/Llama-3.2-3B-Instruct-Turbo"),
+			together.New(cfg.TogetherKey, "gemini", "meta-llama/Llama-3.2-3B-Instruct-Turbo"),
 		}
 		fixGenerator = fix.NewMockGenerator() // keep fix gen as mock to avoid Anthropic costs
 	} else {

@@ -29,6 +29,7 @@ type Config struct {
 	PerplexityKey  string
 	GeminiKey      string
 	AnthropicKey   string
+	TogetherKey    string // optional — when set, replaces OpenAI/Perplexity/Gemini for scans
 
 	// Stripe (optional)
 	StripeSecretKey      string
@@ -64,6 +65,7 @@ func Load() (*Config, error) {
 		PerplexityKey:        os.Getenv("PERPLEXITY_KEY"),
 		GeminiKey:            os.Getenv("GEMINI_KEY"),
 		AnthropicKey:         os.Getenv("ANTHROPIC_KEY"),
+		TogetherKey:          os.Getenv("TOGETHER_KEY"),
 
 		// Optional with defaults
 		Port:             envOrDefault("PORT", "8081"),

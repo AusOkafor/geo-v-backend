@@ -20,6 +20,7 @@ import (
 	"github.com/austinokafor/geo-backend/internal/platform/mock"
 	"github.com/austinokafor/geo-backend/internal/platform/openai"
 	"github.com/austinokafor/geo-backend/internal/platform/perplexity"
+	"github.com/austinokafor/geo-backend/internal/platform/together"
 )
 
 func main() {
@@ -67,6 +68,14 @@ func main() {
 			mock.New("gemini"),
 		}
 		fixGenerator = fix.NewMockGenerator()
+	} else if cfg.TogetherKey != "" {
+		slog.Info("TOGETHER_KEY set — using Together.ai for all scan platforms")
+		aiClients = []platform.AIClient{
+			together.New(cfg.TogetherKey, "chatgpt", "meta-llama/Llama-3.3-70B-Instruct-Turbo"),
+			together.New(cfg.TogetherKey, "perplexity", "mistralai/Mixtral-8x7B-Instruct-v0.1"),
+			together.New(cfg.TogetherKey, "gemini", "google/gemma-2-9b-it"),
+		}
+		fixGenerator = fix.NewMockGenerator() // keep fix gen as mock to avoid Anthropic costs
 	} else {
 		aiClients = []platform.AIClient{
 			openai.New(cfg.OpenAIKey),

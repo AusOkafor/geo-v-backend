@@ -6,8 +6,8 @@ import (
 	"strconv"
 
 	"github.com/labstack/echo/v4"
-	"github.com/yourname/geo-backend/internal/jobs"
-	"github.com/yourname/geo-backend/internal/store"
+	"github.com/austinokafor/geo-backend/internal/jobs"
+	"github.com/austinokafor/geo-backend/internal/store"
 )
 
 // getAuthMerchant resolves the authenticated merchant from context.

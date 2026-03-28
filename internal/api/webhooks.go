@@ -2,12 +2,13 @@ package api
 
 import (
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"github.com/yourname/geo-backend/internal/jobs"
-	"github.com/yourname/geo-backend/internal/shopify"
-	"github.com/yourname/geo-backend/internal/store"
+	"github.com/austinokafor/geo-backend/internal/jobs"
+	"github.com/austinokafor/geo-backend/internal/shopify"
+	"github.com/austinokafor/geo-backend/internal/store"
 )
 
 // webhookHandler provides idempotent Shopify webhook processing.
@@ -39,7 +40,9 @@ func (h *Handler) handleWebhook(c echo.Context, topic string, process func(shopD
 		return c.JSON(http.StatusOK, nil) // DB error — return 200, let Shopify retry
 	}
 
-	_ = process(shopDomain, body) // ignore processing errors — already idempotent
+	if err := process(shopDomain, body); err != nil {
+		slog.Error("webhook processing error", "topic", topic, "shop", shopDomain, "err", err)
+	}
 	return c.JSON(http.StatusOK, nil)
 }
 

@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/yourname/geo-backend/internal/shopify"
+	"github.com/austinokafor/geo-backend/internal/shopify"
 )
 
 // UpsertProducts syncs the Shopify product list into the products table.

@@ -6,9 +6,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
-	"github.com/yourname/geo-backend/internal/crypto"
-	"github.com/yourname/geo-backend/internal/shopify"
-	"github.com/yourname/geo-backend/internal/store"
+	"github.com/austinokafor/geo-backend/internal/crypto"
+	"github.com/austinokafor/geo-backend/internal/shopify"
+	"github.com/austinokafor/geo-backend/internal/store"
 )
 
 // ProductSyncWorker fetches all products from Shopify and upserts them locally.

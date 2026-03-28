@@ -1,4 +1,4 @@
-module github.com/yourname/geo-backend
+module github.com/austinokafor/geo-backend
 
 go 1.23
 

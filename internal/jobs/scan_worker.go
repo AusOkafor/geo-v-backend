@@ -8,9 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
-	"github.com/yourname/geo-backend/internal/platform"
-	"github.com/yourname/geo-backend/internal/query"
-	"github.com/yourname/geo-backend/internal/store"
+	"github.com/austinokafor/geo-backend/internal/platform"
+	"github.com/austinokafor/geo-backend/internal/query"
+	"github.com/austinokafor/geo-backend/internal/store"
 )
 
 // ScanWorker executes AI visibility scans for a single merchant.

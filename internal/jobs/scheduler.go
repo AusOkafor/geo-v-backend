@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
-	"github.com/yourname/geo-backend/internal/store"
+	"github.com/austinokafor/geo-backend/internal/store"
 )
 
 // DailyScanArgs is the argument type for the daily scan scheduler periodic job.

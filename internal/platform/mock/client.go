@@ -7,7 +7,7 @@ import (
 	"hash/fnv"
 	"time"
 
-	"github.com/yourname/geo-backend/internal/platform"
+	"github.com/austinokafor/geo-backend/internal/platform"
 )
 
 var knownCompetitors = []string{

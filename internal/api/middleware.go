@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"github.com/yourname/geo-backend/internal/auth"
-	"github.com/yourname/geo-backend/internal/config"
+	"github.com/austinokafor/geo-backend/internal/auth"
+	"github.com/austinokafor/geo-backend/internal/config"
 )
 
 const merchantIDKey = "merchant_id"

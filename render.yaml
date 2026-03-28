@@ -17,6 +17,10 @@ services:
         sync: false   # Supabase transaction pooler URL — set in Render dashboard
       - key: DATABASE_DIRECT_URL
         sync: false   # Supabase direct URL — set in Render dashboard
+      - key: DATABASE_SESSION_URL
+        sync: false   # Supabase session-mode pooler URL — set in Render dashboard
+      - key: BACKEND_URL
+        value: "https://geo-v-backend.onrender.com"
       - key: ENCRYPTION_KEY
         sync: false   # 32-char AES key
       - key: SHOPIFY_CLIENT_ID
@@ -36,9 +40,7 @@ services:
       - key: SENTRY_DSN
         sync: false
     # Run DB migrations before each deploy
-    preDeployCommand: >
-      migrate -path /migrations -database $DATABASE_URL up &&
-      river migrate-up --database-url $DATABASE_URL
+    preDeployCommand: /bin/migrate
 
   # ─── Background worker ────────────────────────────────────────────────────
   - type: worker
@@ -57,6 +59,10 @@ services:
           type: web
           name: geo-api
           envVarKey: DATABASE_DIRECT_URL
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: DATABASE_SESSION_URL
       - fromService:
           type: web
           name: geo-api

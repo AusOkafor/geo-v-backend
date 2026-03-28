@@ -5,7 +5,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 	"github.com/riverqueue/river"
-	"github.com/yourname/geo-backend/internal/config"
+	"github.com/austinokafor/geo-backend/internal/config"
 )
 
 // Handler holds all dependencies for HTTP handlers.

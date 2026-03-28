@@ -6,18 +6,20 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
-	"github.com/yourname/geo-backend/internal/config"
-	"github.com/yourname/geo-backend/internal/db"
-	"github.com/yourname/geo-backend/internal/fix"
-	"github.com/yourname/geo-backend/internal/jobs"
-	"github.com/yourname/geo-backend/internal/platform"
-	"github.com/yourname/geo-backend/internal/platform/gemini"
-	"github.com/yourname/geo-backend/internal/platform/mock"
-	"github.com/yourname/geo-backend/internal/platform/openai"
-	"github.com/yourname/geo-backend/internal/platform/perplexity"
+	"github.com/austinokafor/geo-backend/internal/config"
+	"github.com/austinokafor/geo-backend/internal/db"
+	"github.com/austinokafor/geo-backend/internal/fix"
+	"github.com/austinokafor/geo-backend/internal/jobs"
+	"github.com/austinokafor/geo-backend/internal/platform"
+	"github.com/austinokafor/geo-backend/internal/platform/gemini"
+	"github.com/austinokafor/geo-backend/internal/platform/mock"
+	"github.com/austinokafor/geo-backend/internal/platform/openai"
+	"github.com/austinokafor/geo-backend/internal/platform/perplexity"
 )
 
 func main() {
@@ -28,6 +30,18 @@ func main() {
 	if err != nil {
 		slog.Error("config load failed", "err", err)
 		os.Exit(1)
+	}
+
+	// Sentry (optional — only active when SENTRY_DSN is set)
+	if cfg.SentryDSN != "" {
+		if err := sentry.Init(sentry.ClientOptions{
+			Dsn:         cfg.SentryDSN,
+			Environment: cfg.Environment,
+		}); err != nil {
+			slog.Warn("sentry init failed", "err", err)
+		} else {
+			defer sentry.Flush(2 * time.Second)
+		}
 	}
 
 	ctx := context.Background()

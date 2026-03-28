@@ -10,11 +10,11 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/riverqueue/river"
-	"github.com/yourname/geo-backend/internal/auth"
-	"github.com/yourname/geo-backend/internal/crypto"
-	"github.com/yourname/geo-backend/internal/jobs"
-	"github.com/yourname/geo-backend/internal/shopify"
-	"github.com/yourname/geo-backend/internal/store"
+	"github.com/austinokafor/geo-backend/internal/auth"
+	"github.com/austinokafor/geo-backend/internal/crypto"
+	"github.com/austinokafor/geo-backend/internal/jobs"
+	"github.com/austinokafor/geo-backend/internal/shopify"
+	"github.com/austinokafor/geo-backend/internal/store"
 )
 
 // OAuthBegin redirects to Shopify's OAuth authorization page.
@@ -58,12 +58,7 @@ func (h *Handler) OAuthBegin(c echo.Context) error {
 		Path:     "/",
 	})
 
-	var redirectURI string
-	if h.Config.IsProd() {
-		redirectURI = "https://geo-v-backend.onrender.com/oauth/callback"
-	} else {
-		redirectURI = "http://localhost:8081/oauth/callback"
-	}
+	redirectURI := h.Config.BackendURL + "/oauth/callback"
 
 	authURL := shopify.BuildAuthURL(shop, h.Config.ShopifyClientID, redirectURI, state)
 	return c.Redirect(http.StatusFound, authURL)

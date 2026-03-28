@@ -9,9 +9,10 @@ RUN go mod download
 
 COPY . .
 
-# Build both binaries — strip debug info to minimize image size
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/api  ./cmd/api
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/worker ./cmd/worker
+# Build all binaries — strip debug info to minimize image size
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/api     ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/worker  ./cmd/worker
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/migrate ./cmd/migrate
 
 # Copy migrations so the pre-deploy command can find them
 RUN mkdir -p /migrations && cp -r migrations/* /migrations/
@@ -26,8 +27,9 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifi
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
 # Binaries
-COPY --from=builder /bin/api    /bin/api
-COPY --from=builder /bin/worker /bin/worker
+COPY --from=builder /bin/api     /bin/api
+COPY --from=builder /bin/worker  /bin/worker
+COPY --from=builder /bin/migrate /bin/migrate
 
 # Migrations (used by pre-deploy command on Render)
 COPY --from=builder /migrations /migrations

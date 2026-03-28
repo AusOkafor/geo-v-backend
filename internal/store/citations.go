@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/yourname/geo-backend/internal/platform"
+	"github.com/austinokafor/geo-backend/internal/platform"
 )
 
 // InsertCitationRecord saves one AI scan result to citation_records.

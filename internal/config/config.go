@@ -38,6 +38,8 @@ type Config struct {
 	Port            string
 	Environment     string
 	AppURL          string
+	BackendURL      string
+	SentryDSN       string
 	MockAI          bool // set MOCK_AI=true to skip real API calls (dev/staging)
 	ScanWorkerCount int
 	ScanBatchSize   int
@@ -67,7 +69,9 @@ func Load() (*Config, error) {
 		Port:             envOrDefault("PORT", "8081"),
 		Environment:      envOrDefault("ENVIRONMENT", "development"),
 		AppURL:           envOrDefault("APP_URL", "https://geo-visibility-eight.vercel.app"),
+		BackendURL:       envOrDefault("BACKEND_URL", "http://localhost:8081"),
 		ShopifyAppHandle: envOrDefault("SHOPIFY_APP_HANDLE", "geo-visibility"),
+		SentryDSN:        os.Getenv("SENTRY_DSN"),
 		MockAI:           os.Getenv("MOCK_AI") == "true",
 
 		// Optional billing

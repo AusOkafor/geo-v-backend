@@ -169,6 +169,21 @@ func (h *Handler) TriggerScan(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "queued"})
 }
 
+func (h *Handler) TriggerSync(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	_, err = h.River.Insert(c.Request().Context(),
+		jobs.ProductSyncJobArgs{MerchantID: m.ID, Full: true}, nil)
+	if err != nil {
+		slog.Error("TriggerSync: failed to enqueue", "merchant_id", m.ID, "err", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to queue sync")
+	}
+	slog.Info("TriggerSync: sync queued", "merchant_id", m.ID)
+	return c.JSON(http.StatusOK, map[string]string{"status": "queued"})
+}
+
 func queryInt(c echo.Context, key string, def int) int {
 	v := c.QueryParam(key)
 	if v == "" {

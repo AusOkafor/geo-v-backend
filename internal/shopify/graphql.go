@@ -179,8 +179,8 @@ func FetchAllProducts(ctx context.Context, shop, token string) ([]ProductNode, e
 }
 
 const updateDescriptionMutation = `
-mutation UpdateDescription($id: ID!, $input: ProductInput!) {
-  productUpdate(id: $id, input: $input) {
+mutation UpdateDescription($input: ProductInput!) {
+  productUpdate(input: $input) {
     product { id }
     userErrors { field message }
   }
@@ -194,8 +194,10 @@ type userError struct {
 // UpdateDescription sets the descriptionHtml of a product via the productUpdate mutation.
 func UpdateDescription(ctx context.Context, shop, token, productGID, newHTML string) error {
 	vars := map[string]any{
-		"id":    productGID,
-		"input": map[string]any{"descriptionHtml": newHTML},
+		"input": map[string]any{
+			"id":              productGID,
+			"descriptionHtml": newHTML,
+		},
 	}
 
 	raw, err := Query(ctx, shop, token, updateDescriptionMutation, vars)

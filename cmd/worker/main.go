@@ -75,7 +75,11 @@ func main() {
 			together.New(cfg.TogetherKey, "perplexity", "meta-llama/Meta-Llama-3-8B-Instruct-Lite"),
 			together.New(cfg.TogetherKey, "gemini", "meta-llama/Meta-Llama-3-8B-Instruct-Lite"),
 		}
-		fixGenerator = fix.NewMockGenerator() // keep fix gen as mock to avoid Anthropic costs
+		if cfg.AnthropicKey != "" {
+			fixGenerator = fix.NewGenerator(cfg.AnthropicKey)
+		} else {
+			fixGenerator = fix.NewMockGenerator()
+		}
 	} else {
 		aiClients = []platform.AIClient{
 			openai.New(cfg.OpenAIKey),

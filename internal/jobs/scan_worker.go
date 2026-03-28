@@ -30,6 +30,7 @@ func NewScanWorker(db *pgxpool.Pool, clients []platform.AIClient) *ScanWorker {
 
 func (w *ScanWorker) Work(ctx context.Context, job *river.Job[ScanJobArgs]) error {
 	merchantID := job.Args.MerchantID
+	slog.Info("scan: starting", "merchant_id", merchantID)
 
 	// Load merchant
 	merchant, err := store.GetMerchant(ctx, w.db, merchantID)
@@ -37,7 +38,8 @@ func (w *ScanWorker) Work(ctx context.Context, job *river.Job[ScanJobArgs]) erro
 		return fmt.Errorf("scan: load merchant %d: %w", merchantID, err)
 	}
 	if !merchant.Active {
-		return nil // skip quietly — not an error
+		slog.Info("scan: skipped (inactive)", "merchant_id", merchantID)
+		return nil
 	}
 
 	// Cost guardrail: skip scan if monthly spend exceeds 60% of plan revenue

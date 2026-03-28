@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -17,8 +18,8 @@ type Fix struct {
 	Priority    string     `json:"priority"`
 	Title       string     `json:"title"`
 	Explanation string     `json:"explanation"`
-	Original    []byte     `json:"original"`
-	Generated   []byte     `json:"generated"`
+	Original    json.RawMessage `json:"original"`
+	Generated   json.RawMessage `json:"generated"`
 	EstImpact   int        `json:"est_impact"`
 	Status      string     `json:"status"`
 	AppliedAt   *time.Time `json:"applied_at"`

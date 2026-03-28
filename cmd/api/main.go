@@ -99,7 +99,7 @@ func main() {
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: corsOrigins,
 		AllowHeaders: []string{echo.HeaderContentType, echo.HeaderAuthorization},
-		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 	}))
 
 	h := &api.Handler{

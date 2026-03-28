@@ -112,6 +112,12 @@ func RejectFix(ctx context.Context, db *pgxpool.Pool, merchantID, fixID int64) e
 
 // InsertFix creates a new pending fix.
 func InsertFix(ctx context.Context, db *pgxpool.Pool, f Fix) (int64, error) {
+	if f.Original == nil {
+		f.Original = []byte("{}")
+	}
+	if f.Generated == nil {
+		f.Generated = []byte("{}")
+	}
 	var id int64
 	err := db.QueryRow(ctx, `
 		INSERT INTO pending_fixes

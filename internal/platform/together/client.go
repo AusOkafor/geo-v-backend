@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -107,7 +108,8 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return platform.CitationResult{}, fmt.Errorf("together: HTTP %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return platform.CitationResult{}, fmt.Errorf("together: HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
 	var chatResp chatResponse

@@ -97,12 +97,15 @@ func runWithRetries(ctx context.Context, client platform.AIClient, brand, prompt
 	var results []platform.CitationResult
 	backoff := time.Second
 
+	var lastErr error
 	for i := 0; i < n; i++ {
 		result, err := client.Query(ctx, brand, prompt)
 		if err == nil {
 			results = append(results, result)
 			continue
 		}
+		lastErr = err
+		slog.Debug("scan: attempt failed", "platform", client.Name(), "attempt", i+1, "err", err)
 		if i < n-1 {
 			select {
 			case <-ctx.Done():
@@ -114,7 +117,7 @@ func runWithRetries(ctx context.Context, client platform.AIClient, brand, prompt
 	}
 
 	if len(results) == 0 {
-		return nil, fmt.Errorf("all %d attempts failed for platform %s", n, client.Name())
+		return nil, fmt.Errorf("all %d attempts failed for platform %s: %w", n, client.Name(), lastErr)
 	}
 	return results, nil
 }

@@ -68,6 +68,11 @@ func main() {
 			log.Fatalf("read %s: %v", path, err)
 		}
 		if _, err := schemaPool.Exec(ctx, string(sql)); err != nil {
+			// Skip "already exists" errors — schema was already applied
+			if strings.Contains(err.Error(), "already exists") {
+				log.Printf("Schema: skipping %s (already applied)", filepath.Base(path))
+				continue
+			}
 			log.Fatalf("exec %s: %v", filepath.Base(path), err)
 		}
 		log.Printf("Schema: applied %s", filepath.Base(path))

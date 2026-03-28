@@ -49,8 +49,9 @@ func (c *Client) InputCostPer1kTokens() float64  { return inputCostPer1k }
 func (c *Client) OutputCostPer1kTokens() float64 { return outputCostPer1k }
 
 type chatRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
+	Model     string        `json:"model"`
+	Messages  []chatMessage `json:"messages"`
+	MaxTokens int           `json:"max_tokens"`
 }
 
 type chatMessage struct {
@@ -95,7 +96,8 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	start := time.Now()
 
 	reqBody := chatRequest{
-		Model: c.model,
+		Model:     c.model,
+		MaxTokens: 400,
 		Messages: []chatMessage{
 			{Role: "system", Content: systemPrompt(brandName)},
 			{Role: "user", Content: prompt},

@@ -93,15 +93,18 @@ func GetDailyScores(ctx context.Context, db *pgxpool.Pool, merchantID int64, day
 func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]CompetitorRow, error) {
 	rows, err := db.Query(ctx, `
 		SELECT
-			comp->>'name'     AS name,
+			comp->>'name'          AS name,
 			platform,
 			(comp->>'position')::int AS position,
-			COUNT(*)           AS frequency
-		FROM citation_records,
-		     jsonb_array_elements(competitors) AS comp
+			COUNT(*)               AS frequency
+		FROM citation_records
+		CROSS JOIN LATERAL jsonb_array_elements(
+			CASE WHEN jsonb_typeof(competitors) = 'array' THEN competitors ELSE '[]'::jsonb END
+		) AS comp
 		WHERE merchant_id = $1
 		  AND scanned_at >= CURRENT_DATE - interval '30 days'
 		  AND comp->>'name' IS NOT NULL
+		  AND comp->>'name' != ''
 		GROUP BY name, platform, position
 		ORDER BY frequency DESC
 		LIMIT 20
@@ -111,7 +114,7 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 	}
 	defer rows.Close()
 
-	var comps []CompetitorRow
+	comps := []CompetitorRow{}
 	for rows.Next() {
 		var c CompetitorRow
 		if err := rows.Scan(&c.Name, &c.Platform, &c.Position, &c.Frequency); err != nil {

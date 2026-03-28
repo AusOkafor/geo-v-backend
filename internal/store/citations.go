@@ -10,7 +10,11 @@ import (
 
 // InsertCitationRecord saves one AI scan result to citation_records.
 func InsertCitationRecord(ctx context.Context, db *pgxpool.Pool, merchantID int64, r platform.CitationResult) error {
-	competitorsJSON, err := json.Marshal(r.Competitors)
+	competitors := r.Competitors
+	if competitors == nil {
+		competitors = []platform.Competitor{}
+	}
+	competitorsJSON, err := json.Marshal(competitors)
 	if err != nil {
 		return err
 	}

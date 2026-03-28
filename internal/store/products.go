@@ -43,6 +43,38 @@ func UpsertProducts(ctx context.Context, db *pgxpool.Pool, merchantID int64, pro
 	return nil
 }
 
+// Product mirrors a row from the products table.
+type Product struct {
+	ID          int64
+	MerchantID  int64
+	ShopifyGID  string
+	Title       string
+	Description string
+	Tags        []string
+}
+
+// GetProducts returns all products for a merchant.
+func GetProducts(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]Product, error) {
+	rows, err := db.Query(ctx, `
+		SELECT id, merchant_id, shopify_gid, title, description, tags
+		FROM products WHERE merchant_id = $1 ORDER BY id
+	`, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("store.GetProducts: %w", err)
+	}
+	defer rows.Close()
+
+	var products []Product
+	for rows.Next() {
+		var p Product
+		if err := rows.Scan(&p.ID, &p.MerchantID, &p.ShopifyGID, &p.Title, &p.Description, &p.Tags); err != nil {
+			return nil, err
+		}
+		products = append(products, p)
+	}
+	return products, rows.Err()
+}
+
 // nullableNumeric returns nil for empty/zero price strings.
 func nullableNumeric(s string) interface{} {
 	if s == "" || s == "0" || s == "0.00" {

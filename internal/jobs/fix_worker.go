@@ -50,30 +50,62 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		competitorNames = append(competitorNames, c.Name)
 	}
 
+	// Load synced products so description fixes can target a real product GID
+	products, err := store.GetProducts(ctx, w.db, merchant.ID)
+	if err != nil {
+		products = nil // non-fatal — fixes without a GID are still useful
+	}
+
 	// Find platforms with score < 15% and no pending fix of that type
 	existingFixes, _ := store.GetFixes(ctx, w.db, merchant.ID, "pending")
 	existingTypes := map[fix.FixType]bool{}
+	existingTargets := map[string]bool{} // GIDs already targeted by a pending description fix
 	for _, f := range existingFixes {
 		existingTypes[fix.FixType(f.FixType)] = true
+		if fix.FixType(f.FixType) == fix.FixDescription && f.TargetGID != "" {
+			existingTargets[f.TargetGID] = true
+		}
 	}
 
 	for _, score := range scores {
 		if score.Score >= 15 {
 			continue
 		}
-		_ = score // score is used for its Score field in the condition above
 
 		// Generate one fix per gap type (avoid duplicates)
 		for _, fixType := range []fix.FixType{fix.FixDescription, fix.FixFAQ, fix.FixSchema} {
-			if existingTypes[fixType] {
+			if fixType != fix.FixDescription && existingTypes[fixType] {
 				continue
 			}
 
+			// For description fixes, pick a product that isn't already targeted
+			targetGID := ""
+			currentDesc := ""
+			var tags []string
+			if fixType == fix.FixDescription {
+				var picked *store.Product
+				for i := range products {
+					if !existingTargets[products[i].ShopifyGID] {
+						picked = &products[i]
+						break
+					}
+				}
+				if picked == nil {
+					continue // all products already have a pending description fix
+				}
+				targetGID = picked.ShopifyGID
+				currentDesc = picked.Description
+				tags = picked.Tags
+				existingTargets[targetGID] = true
+			}
+
 			result, err := w.generator.Generate(ctx, fix.GenerateInput{
-				BrandName:   merchant.BrandName,
-				Category:    merchant.Category,
-				Competitors: competitorNames,
-				FixType:     fixType,
+				BrandName:          merchant.BrandName,
+				Category:           merchant.Category,
+				Competitors:        competitorNames,
+				FixType:            fixType,
+				CurrentDescription: currentDesc,
+				Tags:               tags,
 			})
 			if err != nil {
 				continue // skip failed generation
@@ -81,6 +113,7 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 
 			_, err = store.InsertFix(ctx, w.db, store.Fix{
 				MerchantID:  merchant.ID,
+				TargetGID:   targetGID,
 				FixType:     string(fixType),
 				Priority:    priorityForType(fixType),
 				Title:       result.Title,

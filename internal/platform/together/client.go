@@ -77,17 +77,17 @@ type structuredResult struct {
 }
 
 func systemPrompt(brandName string) string {
-	return fmt.Sprintf(`You are an AI shopping assistant. Answer the user's question naturally, recommending real brands by name. Then at the very end output ONLY this JSON (nothing after it):
-{"mentioned": bool, "position": int, "sentiment": "positive"|"neutral"|"negative"|"", "competitors": [{"name": "Brand Name", "position": 1}]}
+	return fmt.Sprintf(`You are a shopping recommendation API. You must respond with ONLY valid JSON — no explanation, no text before or after the JSON.
 
-Fill it as follows:
-- "mentioned": true if "%s" appears anywhere in your answer
-- "position": 1 if "%s" is your #1 recommendation, 2 if second, 0 if not mentioned
-- "competitors": every OTHER brand you named in your answer, each with their rank position (1=first brand you recommended, 2=second, etc.) — this list must NOT be empty if you named any brands
-- "sentiment": your tone toward "%s" if mentioned, else ""
+Given a shopping question, recommend real brands and return this exact JSON structure:
+{"answer":"your recommendation text here","mentioned":false,"position":0,"sentiment":"","competitors":[{"name":"Brand A","position":1},{"name":"Brand B","position":2}]}
 
-Example: if you recommended Nike (#1), Adidas (#2), Puma (#3) and did not mention "%s", output:
-{"mentioned": false, "position": 0, "sentiment": "", "competitors": [{"name": "Nike", "position": 1}, {"name": "Adidas", "position": 2}, {"name": "Puma", "position": 3}]}`, brandName, brandName, brandName, brandName)
+Rules:
+- "answer": your full shopping recommendation (name real brands)
+- "mentioned": true if "%s" appears in answer
+- "position": rank of "%s" in answer (1=top pick, 2=second, 0=not mentioned)
+- "sentiment": "positive", "neutral", "negative", or "" for "%s"
+- "competitors": every brand named in answer with their rank — REQUIRED, never leave empty if you named brands`, brandName, brandName, brandName)
 }
 
 func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.CitationResult, error) {
@@ -142,10 +142,18 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 }
 
 func parseResponse(raw, brandName string) platform.CitationResult {
-	// Extract the last JSON object from the response
-	lastBrace := strings.LastIndex(raw, "{")
-	if lastBrace >= 0 {
-		var s structuredResult
+	// Try full response as JSON first (model instructed to output JSON only)
+	var s structuredResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &s); err == nil && (s.Mentioned || len(s.Competitors) > 0) {
+		return platform.CitationResult{
+			Mentioned:   s.Mentioned,
+			Position:    s.Position,
+			Sentiment:   s.Sentiment,
+			Competitors: s.Competitors,
+		}
+	}
+	// Fallback: find the last { in case model prepended text
+	if lastBrace := strings.LastIndex(raw, "{"); lastBrace >= 0 {
 		if err := json.Unmarshal([]byte(raw[lastBrace:]), &s); err == nil {
 			return platform.CitationResult{
 				Mentioned:   s.Mentioned,
@@ -155,7 +163,7 @@ func parseResponse(raw, brandName string) platform.CitationResult {
 			}
 		}
 	}
-	// Fallback: simple string search
+	// Last resort: simple string search
 	mentioned := strings.Contains(strings.ToLower(raw), strings.ToLower(brandName))
 	return platform.CitationResult{Mentioned: mentioned}
 }

@@ -105,7 +105,7 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 		  AND scanned_at >= CURRENT_DATE - interval '30 days'
 		  AND comp->>'name' IS NOT NULL
 		  AND comp->>'name' != ''
-		GROUP BY name, platform, position
+		GROUP BY comp->>'name', platform, (comp->>'position')::int
 		ORDER BY frequency DESC
 		LIMIT 20
 	`, merchantID)

@@ -68,7 +68,7 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 	}
 
 	for _, score := range scores {
-		if score.Score >= 15 {
+		if score.Score >= 80 {
 			continue
 		}
 

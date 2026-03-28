@@ -154,6 +154,21 @@ func (h *Handler) RejectFix(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "rejected"})
 }
 
+func (h *Handler) TriggerScan(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	_, err = h.River.Insert(c.Request().Context(),
+		jobs.ScanJobArgs{MerchantID: m.ID, Priority: "high"}, nil)
+	if err != nil {
+		slog.Error("TriggerScan: failed to enqueue", "merchant_id", m.ID, "err", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to queue scan")
+	}
+	slog.Info("TriggerScan: scan queued", "merchant_id", m.ID)
+	return c.JSON(http.StatusOK, map[string]string{"status": "queued"})
+}
+
 func queryInt(c echo.Context, key string, def int) int {
 	v := c.QueryParam(key)
 	if v == "" {

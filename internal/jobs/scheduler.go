@@ -36,11 +36,12 @@ func (w *DailyScanScheduler) Work(ctx context.Context, _ *river.Job[DailyScanArg
 		return err
 	}
 
-	params := make([]river.InsertManyParams, 0, len(merchants))
+	params := make([]river.InsertManyParams, 0, len(merchants)*2)
 	for _, m := range merchants {
-		params = append(params, river.InsertManyParams{
-			Args: ScanJobArgs{MerchantID: m.ID, Priority: "normal"},
-		})
+		params = append(params,
+			river.InsertManyParams{Args: ProductSyncJobArgs{MerchantID: m.ID, Full: true}},
+			river.InsertManyParams{Args: ScanJobArgs{MerchantID: m.ID, Priority: "normal"}},
+		)
 	}
 	if len(params) == 0 {
 		return nil

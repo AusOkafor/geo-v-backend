@@ -35,7 +35,8 @@ type AIClient interface {
 }
 
 // CalcCost returns the USD cost for a single request given token counts.
+// InputCostPer1kTokens / OutputCostPer1kTokens are cost in USD per 1 000 tokens.
 func CalcCost(client AIClient, tokIn, tokOut int) float64 {
-	return float64(tokIn)/1_000_000*client.InputCostPer1kTokens()*1000 +
-		float64(tokOut)/1_000_000*client.OutputCostPer1kTokens()*1000
+	return float64(tokIn)/1000*client.InputCostPer1kTokens() +
+		float64(tokOut)/1000*client.OutputCostPer1kTokens()
 }

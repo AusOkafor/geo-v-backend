@@ -17,8 +17,8 @@ const (
 	endpoint = "https://api.openai.com/v1/chat/completions"
 	timeout  = 45 * time.Second
 
-	inputCostPer1k  = 0.15 / 1000  // $0.15 / 1M tokens → $0.00015 / 1k
-	outputCostPer1k = 0.60 / 1000
+	inputCostPer1k  = 0.15 / 1000  // $0.15 per 1M tokens = $0.00015 per 1k tokens
+	outputCostPer1k = 0.60 / 1000  // $0.60 per 1M tokens = $0.00060 per 1k tokens
 )
 
 // Client is the OpenAI implementation of platform.AIClient.

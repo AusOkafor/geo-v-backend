@@ -55,7 +55,12 @@ func (w *ScanWorker) Work(ctx context.Context, job *river.Job[ScanJobArgs]) erro
 		for _, client := range w.clients {
 			results, err := runWithRetries(ctx, client, merchant.BrandName, q.Text, 3)
 			if err != nil {
-				// Log but continue — one platform failure shouldn't abort the whole scan
+				slog.Warn("scan: platform failed, skipping",
+					"merchant_id", merchantID,
+					"platform", client.Name(),
+					"query", q.Text,
+					"err", err,
+				)
 				continue
 			}
 

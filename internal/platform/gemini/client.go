@@ -17,8 +17,8 @@ const (
 	endpoint = "https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent"
 	timeout  = 45 * time.Second
 
-	inputCostPer1k  = 0.075 / 1000
-	outputCostPer1k = 0.30 / 1000
+	inputCostPer1k  = 0.075 / 1000  // $0.075 per 1M tokens = $0.000075 per 1k tokens
+	outputCostPer1k = 0.30 / 1000   // $0.30  per 1M tokens = $0.00030  per 1k tokens
 )
 
 // Client is the Gemini implementation of platform.AIClient.

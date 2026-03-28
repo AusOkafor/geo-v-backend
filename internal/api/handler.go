@@ -36,6 +36,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// Authenticated dashboard API
 	api := e.Group("/api/v1", sessionAuth(h.Config))
 	api.GET("/merchant", h.GetMerchant)
+	api.PATCH("/merchant", h.UpdateMerchant)
 	api.GET("/visibility/scores", h.GetVisibilityScores)
 	api.GET("/visibility/daily", h.GetDailyScores)
 	api.GET("/competitors", h.GetCompetitors)

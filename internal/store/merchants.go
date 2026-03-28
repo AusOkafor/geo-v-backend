@@ -25,35 +25,64 @@ type Merchant struct {
 // GetMerchant fetches a merchant by primary key.
 func GetMerchant(ctx context.Context, db *pgxpool.Pool, id int64) (*Merchant, error) {
 	var m Merchant
+	var dbBrandName, dbCategory *string
 	err := db.QueryRow(ctx, `
-		SELECT id, shop_domain, access_token_enc, scope, plan, active, installed_at, uninstalled_at
+		SELECT id, shop_domain, access_token_enc, scope, plan, active, installed_at, uninstalled_at,
+		       brand_name, category
 		FROM merchants WHERE id = $1
 	`, id).Scan(
 		&m.ID, &m.ShopDomain, &m.AccessTokenEnc, &m.Scope,
 		&m.Plan, &m.Active, &m.InstalledAt, &m.UninstalledAt,
+		&dbBrandName, &dbCategory,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store.GetMerchant: %w", err)
 	}
-	m.BrandName = shopDomainToBrand(m.ShopDomain)
+	if dbBrandName != nil && *dbBrandName != "" {
+		m.BrandName = *dbBrandName
+	} else {
+		m.BrandName = shopDomainToBrand(m.ShopDomain)
+	}
+	if dbCategory != nil {
+		m.Category = *dbCategory
+	}
 	return &m, nil
 }
 
 // GetMerchantByDomain fetches a merchant by Shopify shop domain.
 func GetMerchantByDomain(ctx context.Context, db *pgxpool.Pool, domain string) (*Merchant, error) {
 	var m Merchant
+	var dbBrandName, dbCategory *string
 	err := db.QueryRow(ctx, `
-		SELECT id, shop_domain, access_token_enc, scope, plan, active, installed_at, uninstalled_at
+		SELECT id, shop_domain, access_token_enc, scope, plan, active, installed_at, uninstalled_at,
+		       brand_name, category
 		FROM merchants WHERE shop_domain = $1
 	`, domain).Scan(
 		&m.ID, &m.ShopDomain, &m.AccessTokenEnc, &m.Scope,
 		&m.Plan, &m.Active, &m.InstalledAt, &m.UninstalledAt,
+		&dbBrandName, &dbCategory,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store.GetMerchantByDomain: %w", err)
 	}
-	m.BrandName = shopDomainToBrand(m.ShopDomain)
+	if dbBrandName != nil && *dbBrandName != "" {
+		m.BrandName = *dbBrandName
+	} else {
+		m.BrandName = shopDomainToBrand(m.ShopDomain)
+	}
+	if dbCategory != nil {
+		m.Category = *dbCategory
+	}
 	return &m, nil
+}
+
+// UpdateMerchantProfile saves the merchant's brand name and product category.
+func UpdateMerchantProfile(ctx context.Context, db *pgxpool.Pool, id int64, brandName, category string) error {
+	_, err := db.Exec(ctx, `
+		UPDATE merchants SET brand_name = $1, category = $2, updated_at = now()
+		WHERE id = $3
+	`, brandName, category, id)
+	return err
 }
 
 // GetActiveMerchants returns all merchants with active=true.

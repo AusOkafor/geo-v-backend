@@ -26,12 +26,32 @@ func (h *Handler) GetMerchant(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "merchant not found")
 	}
 	return c.JSON(http.StatusOK, map[string]any{
-		"id":         m.ID,
+		"id":          m.ID,
 		"shop_domain": m.ShopDomain,
-		"brand_name": m.BrandName,
-		"plan":       m.Plan,
-		"active":     m.Active,
+		"brand_name":  m.BrandName,
+		"category":    m.Category,
+		"plan":        m.Plan,
+		"active":      m.Active,
+		"installed_at": m.InstalledAt,
 	})
+}
+
+func (h *Handler) UpdateMerchant(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	var body struct {
+		BrandName string `json:"brand_name"`
+		Category  string `json:"category"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
+	}
+	if err := store.UpdateMerchantProfile(c.Request().Context(), h.DB, m.ID, body.BrandName, body.Category); err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
 }
 
 func (h *Handler) GetVisibilityScores(c echo.Context) error {

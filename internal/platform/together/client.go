@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -129,6 +130,8 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	if len(chatResp.Choices) > 0 {
 		raw = chatResp.Choices[0].Message.Content
 	}
+
+	slog.Debug("together: raw response", "platform", c.name, "raw", raw)
 
 	result := parseResponse(raw, brandName)
 	result.Platform = c.Name()

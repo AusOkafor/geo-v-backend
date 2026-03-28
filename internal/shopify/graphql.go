@@ -178,6 +178,39 @@ func FetchAllProducts(ctx context.Context, shop, token string) ([]ProductNode, e
 	return products, nil
 }
 
+const registerWebhookMutation = `
+mutation RegisterWebhook($topic: WebhookSubscriptionTopic!, $callbackUrl: URL!) {
+  webhookSubscriptionCreate(topic: $topic, webhookSubscription: {callbackUrl: $callbackUrl, format: JSON}) {
+    webhookSubscription { id }
+    userErrors { field message }
+  }
+}`
+
+// RegisterWebhook registers a single webhook subscription for the given topic.
+// It is idempotent — Shopify deduplicates by callbackUrl+topic.
+func RegisterWebhook(ctx context.Context, shop, token, topic, callbackURL string) error {
+	vars := map[string]any{
+		"topic":       topic,
+		"callbackUrl": callbackURL,
+	}
+	raw, err := Query(ctx, shop, token, registerWebhookMutation, vars)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		WebhookSubscriptionCreate struct {
+			UserErrors []userError `json:"userErrors"`
+		} `json:"webhookSubscriptionCreate"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Errorf("shopify: parse registerWebhook response: %w", err)
+	}
+	if len(resp.WebhookSubscriptionCreate.UserErrors) > 0 {
+		return fmt.Errorf("shopify: registerWebhook userError: %s", resp.WebhookSubscriptionCreate.UserErrors[0].Message)
+	}
+	return nil
+}
+
 const updateDescriptionMutation = `
 mutation UpdateDescription($input: ProductInput!) {
   productUpdate(input: $input) {

@@ -106,6 +106,22 @@ func (h *Handler) OAuthCallback(c echo.Context) error {
 		return fmt.Errorf("oauth: upsert merchant: %w", err)
 	}
 
+	// Register webhooks (idempotent — safe to call on every install/reinstall)
+	webhookTopics := []string{
+		"PRODUCTS_UPDATE",
+		"PRODUCTS_CREATE",
+		"APP_UNINSTALLED",
+	}
+	for _, topic := range webhookTopics {
+		callbackURL := fmt.Sprintf("%s/webhooks/shopify/%s",
+			h.Config.BackendURL,
+			strings.ToLower(strings.ReplaceAll(topic, "_", "/")),
+		)
+		if err := shopify.RegisterWebhook(c.Request().Context(), shop, tok.AccessToken, topic, callbackURL); err != nil {
+			slog.Warn("oauth: failed to register webhook", "topic", topic, "err", err)
+		}
+	}
+
 	// Enqueue initial high-priority scan + product sync
 	if _, err = h.River.InsertMany(c.Request().Context(), []river.InsertManyParams{
 		{Args: jobs.ProductSyncJobArgs{MerchantID: merchant.ID, Full: true}},

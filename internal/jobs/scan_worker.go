@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/austinokafor/geo-backend/internal/platform"
@@ -16,16 +17,17 @@ import (
 // ScanWorker executes AI visibility scans for a single merchant.
 type ScanWorker struct {
 	river.WorkerDefaults[ScanJobArgs]
-	db      *pgxpool.Pool
-	clients []platform.AIClient
+	db          *pgxpool.Pool
+	clients     []platform.AIClient
+	riverClient *river.Client[pgx.Tx]
 }
 
 func (w *ScanWorker) Timeout(_ *river.Job[ScanJobArgs]) time.Duration {
 	return 20 * time.Minute // real LLM calls can be slow; override River's default
 }
 
-func NewScanWorker(db *pgxpool.Pool, clients []platform.AIClient) *ScanWorker {
-	return &ScanWorker{db: db, clients: clients}
+func NewScanWorker(db *pgxpool.Pool, clients []platform.AIClient, rc *river.Client[pgx.Tx]) *ScanWorker {
+	return &ScanWorker{db: db, clients: clients, riverClient: rc}
 }
 
 func (w *ScanWorker) Work(ctx context.Context, job *river.Job[ScanJobArgs]) error {
@@ -90,7 +92,18 @@ func (w *ScanWorker) Work(ctx context.Context, job *river.Job[ScanJobArgs]) erro
 	}
 
 	// Aggregate citation_records → visibility_scores
-	return store.UpsertVisibilityScores(ctx, w.db, merchantID)
+	if err := store.UpsertVisibilityScores(ctx, w.db, merchantID); err != nil {
+		return err
+	}
+
+	// Enqueue fix generation immediately after scan so fixes are always fresh.
+	// FixGenerationWorker is idempotent (skips existing pending fix types).
+	if w.riverClient != nil {
+		if _, err := w.riverClient.Insert(ctx, FixGenerationJobArgs{MerchantID: merchantID}, nil); err != nil {
+			slog.Warn("scan: failed to enqueue fix generation", "merchant_id", merchantID, "err", err)
+		}
+	}
+	return nil
 }
 
 // runWithRetries calls client.Query up to n times with exponential backoff.
@@ -130,7 +143,15 @@ func aggregateResults(results []platform.CitationResult) platform.CitationResult
 		return platform.CitationResult{}
 	}
 
-	base := results[0]
+	// Use the result with the most competitors as base so we don't lose data
+	// when an earlier run returned an empty list due to a model fluke.
+	bestIdx := 0
+	for i, r := range results {
+		if len(r.Competitors) > len(results[bestIdx].Competitors) {
+			bestIdx = i
+		}
+	}
+	base := results[bestIdx]
 
 	// Majority vote on Mentioned
 	mentionedCount := 0

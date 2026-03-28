@@ -73,6 +73,7 @@ type chatResponse struct {
 }
 
 type structuredResult struct {
+	Answer      string                `json:"answer"`
 	Mentioned   bool                  `json:"mentioned"`
 	Position    int                   `json:"position"`
 	Sentiment   string                `json:"sentiment"`
@@ -149,27 +150,57 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 }
 
 func parseResponse(raw, brandName string) platform.CitationResult {
-	// Try full response as JSON first (model instructed to output JSON only)
 	var s structuredResult
+	parsed := false
+
+	// Try full response as JSON first (model instructed to output JSON only)
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &s); err == nil && (s.Mentioned || len(s.Competitors) > 0) {
-		return platform.CitationResult{
-			Mentioned:   s.Mentioned,
-			Position:    s.Position,
-			Sentiment:   s.Sentiment,
-			Competitors: s.Competitors,
-		}
+		parsed = true
 	}
 	// Fallback: find the last { in case model prepended text
-	if lastBrace := strings.LastIndex(raw, "{"); lastBrace >= 0 {
-		if err := json.Unmarshal([]byte(raw[lastBrace:]), &s); err == nil {
-			return platform.CitationResult{
-				Mentioned:   s.Mentioned,
-				Position:    s.Position,
-				Sentiment:   s.Sentiment,
-				Competitors: s.Competitors,
+	if !parsed {
+		if lastBrace := strings.LastIndex(raw, "{"); lastBrace >= 0 {
+			if err := json.Unmarshal([]byte(raw[lastBrace:]), &s); err == nil {
+				parsed = true
 			}
 		}
 	}
+
+	if parsed {
+		// Validate mentioned against the actual answer text — the model sometimes
+		// returns mentioned:true even when the brand doesn't appear in the answer.
+		brandLower := strings.ToLower(brandName)
+		mentioned := strings.Contains(strings.ToLower(s.Answer), brandLower)
+
+		position := s.Position
+		// Fix position=0 when mentioned: model sets mentioned:true but omits the
+		// brand from the competitors array, leaving position at its zero value.
+		// Search competitors for a name match first, then fall back to rank 1.
+		if mentioned && position == 0 {
+			for _, comp := range s.Competitors {
+				if strings.EqualFold(comp.Name, brandName) {
+					position = comp.Position
+					break
+				}
+			}
+			if position == 0 {
+				position = 1 // mentioned but rank unknown — treat as top mention
+			}
+		}
+
+		sentiment := s.Sentiment
+		if !mentioned {
+			sentiment = ""
+		}
+
+		return platform.CitationResult{
+			Mentioned:   mentioned,
+			Position:    position,
+			Sentiment:   sentiment,
+			Competitors: s.Competitors,
+		}
+	}
+
 	// Last resort: simple string search
 	mentioned := strings.Contains(strings.ToLower(raw), strings.ToLower(brandName))
 	return platform.CitationResult{Mentioned: mentioned}

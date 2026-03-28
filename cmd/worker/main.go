@@ -89,9 +89,9 @@ func main() {
 		fixGenerator = fix.NewGenerator(cfg.AnthropicKey)
 	}
 
-	// Build River workers
+	// Build River workers — scan worker needs the riverClient to enqueue fix
+	// generation after each scan, so it is registered after the client is created.
 	workers := river.NewWorkers()
-	river.AddWorker(workers, jobs.NewScanWorker(pool, aiClients))
 	river.AddWorker(workers, jobs.NewProductSyncWorker(pool, encKey))
 	river.AddWorker(workers, jobs.NewDataDeletionWorker(pool))
 	river.AddWorker(workers, jobs.NewFixGenerationWorker(pool, fixGenerator))
@@ -113,7 +113,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Register scheduler workers (need the riverClient reference)
+	// Register workers that need the riverClient reference
+	river.AddWorker(workers, jobs.NewScanWorker(pool, aiClients, riverClient))
 	river.AddWorker(workers, jobs.NewDailyScanScheduler(pool, riverClient))
 	river.AddWorker(workers, jobs.NewWeeklyFixScheduler(pool, riverClient))
 

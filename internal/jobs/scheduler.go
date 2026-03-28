@@ -99,14 +99,14 @@ func BuildPeriodicJobs() []*river.PeriodicJob {
 			func() (river.JobArgs, *river.InsertOpts) {
 				return DailyScanArgs{}, nil
 			},
-			&river.PeriodicJobOpts{RunOnStart: true},
+			nil,
 		),
 		river.NewPeriodicJob(
 			river.PeriodicInterval(7*24*time.Hour),
 			func() (river.JobArgs, *river.InsertOpts) {
 				return WeeklyFixArgs{}, nil
 			},
-			&river.PeriodicJobOpts{RunOnStart: true},
+			nil,
 		),
 	}
 }

@@ -112,7 +112,7 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 		},
 		GenerationConfig: genConfig{
 			ResponseMIMEType: "application/json",
-			MaxOutputTokens:  400,
+			MaxOutputTokens:  800,
 		},
 	}
 
@@ -129,6 +129,22 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 		return platform.CitationResult{}, fmt.Errorf("gemini: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 {
+		// Parse the retryDelay from the response body and wait before returning
+		// so the caller's retry loop has a chance of succeeding.
+		body, _ := io.ReadAll(resp.Body)
+		delay := parseRetryDelay(string(body))
+		if delay > 0 && delay <= 60*time.Second {
+			slog.Debug("gemini: rate limited, waiting before retry", "delay", delay)
+			select {
+			case <-ctx.Done():
+				return platform.CitationResult{}, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+		return platform.CitationResult{}, fmt.Errorf("gemini: HTTP 429 (rate limited, retry after %s)", delay)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -156,6 +172,28 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	result.Duration = time.Since(start)
 	result.RawResponse = raw
 	return result, nil
+}
+
+// parseRetryDelay extracts the retryDelay from a Gemini 429 response body.
+// The JSON contains "retryDelay": "40s" inside the details array.
+// Returns 0 if not found or not parseable.
+func parseRetryDelay(body string) time.Duration {
+	// Quick string search to avoid full JSON unmarshal on error path
+	const marker = `"retryDelay": "`
+	idx := strings.Index(body, marker)
+	if idx < 0 {
+		return 0
+	}
+	start := idx + len(marker)
+	end := strings.Index(body[start:], `"`)
+	if end < 0 {
+		return 0
+	}
+	d, err := time.ParseDuration(body[start : start+end])
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 func parseResponse(raw, brandName string) platform.CitationResult {

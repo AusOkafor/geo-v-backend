@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -13,12 +15,12 @@ import (
 )
 
 const (
-	model    = "gemini-2.0-flash"
-	endpoint = "https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent"
+	endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent"
 	timeout  = 45 * time.Second
 
-	inputCostPer1k  = 0.075 / 1000  // $0.075 per 1M tokens = $0.000075 per 1k tokens
-	outputCostPer1k = 0.30 / 1000   // $0.30  per 1M tokens = $0.00030  per 1k tokens
+	// Gemini Flash pricing
+	inputCostPer1k  = 0.15 / 1000 // $0.15 per 1M tokens
+	outputCostPer1k = 0.60 / 1000 // $0.60 per 1M tokens
 )
 
 // Client is the Gemini implementation of platform.AIClient.
@@ -34,9 +36,9 @@ func New(apiKey string) *Client {
 	}
 }
 
-func (c *Client) Name() string                    { return "gemini" }
-func (c *Client) InputCostPer1kTokens() float64   { return inputCostPer1k }
-func (c *Client) OutputCostPer1kTokens() float64  { return outputCostPer1k }
+func (c *Client) Name() string                   { return "gemini" }
+func (c *Client) InputCostPer1kTokens() float64  { return inputCostPer1k }
+func (c *Client) OutputCostPer1kTokens() float64 { return outputCostPer1k }
 
 type generateRequest struct {
 	SystemInstruction systemContent `json:"systemInstruction"`
@@ -59,6 +61,7 @@ type part struct {
 
 type genConfig struct {
 	ResponseMIMEType string `json:"responseMimeType"`
+	MaxOutputTokens  int    `json:"maxOutputTokens"`
 }
 
 type generateResponse struct {
@@ -76,6 +79,7 @@ type generateResponse struct {
 }
 
 type structuredResult struct {
+	Answer      string                `json:"answer"`
 	Mentioned   bool                  `json:"mentioned"`
 	Position    int                   `json:"position"`
 	Sentiment   string                `json:"sentiment"`
@@ -83,9 +87,17 @@ type structuredResult struct {
 }
 
 func systemPrompt(brandName string) string {
-	return fmt.Sprintf(`You are an AI search visibility analyst. When answering the user's question, note whether the brand "%s" is mentioned. Return a JSON object:
-{"mentioned": bool, "position": int, "sentiment": "positive"|"neutral"|"negative"|"", "competitors": [{"name": string, "position": int}]}
-Where "position" is 1 if the brand is the first recommendation, 0 if not mentioned.`, brandName)
+	return fmt.Sprintf(`You are a shopping recommendation API. You must respond with ONLY valid JSON — no explanation, no text before or after the JSON.
+
+Given a shopping question, recommend real brands and return this exact JSON structure:
+{"answer":"your recommendation text here","mentioned":false,"position":0,"sentiment":"","competitors":[{"name":"Brand A","position":1},{"name":"Brand B","position":2}]}
+
+Rules:
+- "answer": your full shopping recommendation (name real brands)
+- "mentioned": true if "%s" appears in answer
+- "position": rank of "%s" in answer (1=top pick, 2=second, 0=not mentioned)
+- "sentiment": "positive", "neutral", "negative", or "" for "%s"
+- "competitors": every brand named in answer with their rank — REQUIRED, never leave empty if you named brands`, brandName, brandName, brandName)
 }
 
 func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.CitationResult, error) {
@@ -100,6 +112,7 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 		},
 		GenerationConfig: genConfig{
 			ResponseMIMEType: "application/json",
+			MaxOutputTokens:  400,
 		},
 	}
 
@@ -118,7 +131,8 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return platform.CitationResult{}, fmt.Errorf("gemini: HTTP %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return platform.CitationResult{}, fmt.Errorf("gemini: HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
 	var genResp generateResponse
@@ -130,6 +144,8 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	if len(genResp.Candidates) > 0 && len(genResp.Candidates[0].Content.Parts) > 0 {
 		raw = genResp.Candidates[0].Content.Parts[0].Text
 	}
+
+	slog.Debug("gemini: raw response", "raw", raw)
 
 	result := parseResponse(raw, brandName)
 	result.Platform = c.Name()
@@ -144,14 +160,38 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 
 func parseResponse(raw, brandName string) platform.CitationResult {
 	var s structuredResult
-	if err := json.Unmarshal([]byte(raw), &s); err == nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &s); err == nil {
+		// Validate mentioned against the actual answer text — model can hallucinate this field
+		brandLower := strings.ToLower(brandName)
+		mentioned := strings.Contains(strings.ToLower(s.Answer), brandLower)
+
+		position := s.Position
+		if mentioned && position == 0 {
+			for _, comp := range s.Competitors {
+				if strings.EqualFold(comp.Name, brandName) {
+					position = comp.Position
+					break
+				}
+			}
+			if position == 0 {
+				position = 1
+			}
+		}
+
+		sentiment := s.Sentiment
+		if !mentioned {
+			sentiment = ""
+		}
+
 		return platform.CitationResult{
-			Mentioned:   s.Mentioned,
-			Position:    s.Position,
-			Sentiment:   s.Sentiment,
+			Mentioned:   mentioned,
+			Position:    position,
+			Sentiment:   sentiment,
 			Competitors: s.Competitors,
 		}
 	}
+
+	// Fallback: string search only
 	mentioned := strings.Contains(strings.ToLower(raw), strings.ToLower(brandName))
 	return platform.CitationResult{Mentioned: mentioned}
 }

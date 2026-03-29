@@ -69,11 +69,20 @@ func main() {
 		}
 		fixGenerator = fix.NewMockGenerator()
 	} else if cfg.TogetherKey != "" {
-		slog.Info("TOGETHER_KEY set — using Together.ai for all scan platforms")
+		// Use Together.ai as the base for ChatGPT and Perplexity mocks.
+		// If GEMINI_KEY is also set, use the real Gemini API for that slot.
+		var geminiClient platform.AIClient
+		if cfg.GeminiKey != "" {
+			slog.Info("GEMINI_KEY set — using real Gemini API alongside Together.ai mocks")
+			geminiClient = gemini.New(cfg.GeminiKey)
+		} else {
+			slog.Info("TOGETHER_KEY set — using Together.ai for all scan platforms")
+			geminiClient = together.New(cfg.TogetherKey, "gemini", "meta-llama/Meta-Llama-3-8B-Instruct-Lite")
+		}
 		aiClients = []platform.AIClient{
 			together.New(cfg.TogetherKey, "chatgpt", "meta-llama/Meta-Llama-3-8B-Instruct-Lite"),
 			together.New(cfg.TogetherKey, "perplexity", "meta-llama/Meta-Llama-3-8B-Instruct-Lite"),
-			together.New(cfg.TogetherKey, "gemini", "meta-llama/Meta-Llama-3-8B-Instruct-Lite"),
+			geminiClient,
 		}
 		if cfg.AnthropicKey != "" {
 			fixGenerator = fix.NewGenerator(cfg.AnthropicKey)

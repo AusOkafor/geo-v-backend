@@ -37,6 +37,8 @@ services:
         sync: false
       - key: ANTHROPIC_KEY
         sync: false
+      - key: TOGETHER_KEY
+        sync: false   # fallback for Perplexity/Gemini slots when real keys are absent
       - key: SENTRY_DSN
         sync: false
     # Run DB migrations before each deploy
@@ -99,6 +101,10 @@ services:
           type: web
           name: geo-api
           envVarKey: ANTHROPIC_KEY
+      - fromService:
+          type: web
+          name: geo-api
+          envVarKey: TOGETHER_KEY
       - fromService:
           type: web
           name: geo-api

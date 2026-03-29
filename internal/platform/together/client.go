@@ -49,10 +49,11 @@ func (c *Client) InputCostPer1kTokens() float64  { return inputCostPer1k }
 func (c *Client) OutputCostPer1kTokens() float64 { return outputCostPer1k }
 
 type chatRequest struct {
-	Model     string        `json:"model"`
-	Messages  []chatMessage `json:"messages"`
-	MaxTokens int           `json:"max_tokens"`
-	Stop      []string      `json:"stop,omitempty"`
+	Model       string        `json:"model"`
+	Messages    []chatMessage `json:"messages"`
+	MaxTokens   int           `json:"max_tokens"`
+	Temperature float64       `json:"temperature"`
+	Stop        []string      `json:"stop,omitempty"`
 }
 
 type chatMessage struct {
@@ -98,9 +99,10 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	start := time.Now()
 
 	reqBody := chatRequest{
-		Model:     c.model,
-		MaxTokens: 400,
-		Stop:      []string{"}\n", "} \n", "}\r\n"},
+		Model:       c.model,
+		MaxTokens:   400,
+		Temperature: 0.7, // prevents identical responses across retries
+		Stop:        []string{"}\n", "} \n", "}\r\n"},
 		Messages: []chatMessage{
 			{Role: "system", Content: systemPrompt(brandName)},
 			{Role: "user", Content: prompt},

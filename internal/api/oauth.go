@@ -23,10 +23,14 @@ func (h *Handler) OAuthBegin(c echo.Context) error {
 	if shop == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing shop param")
 	}
-	// Normalise: strip protocol prefix, ensure exactly one .myshopify.com suffix
+	// Normalise: strip protocol, strip any path (e.g. store.myshopify.com/admin → store.myshopify.com),
+	// ensure exactly one .myshopify.com suffix.
 	shop = strings.TrimPrefix(shop, "https://")
 	shop = strings.TrimPrefix(shop, "http://")
 	shop = strings.TrimSuffix(shop, "/")
+	if idx := strings.Index(shop, "/"); idx != -1 {
+		shop = shop[:idx]
+	}
 	if !strings.HasSuffix(shop, ".myshopify.com") {
 		shop = shop + ".myshopify.com"
 	}

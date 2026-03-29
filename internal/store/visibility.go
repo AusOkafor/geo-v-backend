@@ -38,36 +38,70 @@ type ScoredCompetitor struct {
 	TotalScans        int            `json:"total_scans"`
 	Score             float64        `json:"score"`
 	WhyPoints         []string       `json:"why_points"`
+	// Class: "brand" = direct competitor | "retailer" = multi-brand store (kept but labelled)
+	Class             string         `json:"class"`
 }
 
-// junkNames are non-brand entities that should never appear as competitors.
-// These are platforms, themes, social networks, and pure marketplaces — not product brands.
-var junkNames = map[string]bool{
+// competitorClass is used to classify competitor names for filtering and labelling.
+// We classify instead of blacklist so the logic is inspectable and extensible.
+type competitorClass string
+
+const (
+	classMarketplace competitorClass = "marketplace" // filtered — pure buy/sell platforms (Amazon, eBay)
+	classPlatform    competitorClass = "platform"    // filtered — tech/social platforms (Shopify, Reddit)
+	classRetailer    competitorClass = "retailer"    // kept + labelled — multi-brand stores (Nordstrom)
+	classBrand       competitorClass = "brand"       // kept — direct DTC product brand competitor
+)
+
+// classifyCompetitor returns the class for a competitor name (already lower-cased).
+func classifyCompetitor(nameLower string) competitorClass {
+	if marketplaceNames[nameLower] || genericPhrases[nameLower] {
+		return classMarketplace
+	}
+	if platformNames[nameLower] {
+		return classPlatform
+	}
+	if retailerNames[nameLower] {
+		return classRetailer
+	}
+	return classBrand
+}
+
+var marketplaceNames = map[string]bool{
+	"amazon": true, "ebay": true, "aliexpress": true, "wish": true,
+	"shein": true, "temu": true, "walmart": true, "target": true, "etsy": true,
+}
+
+var platformNames = map[string]bool{
 	// Web builders & themes
 	"shopify": true, "wordpress": true, "squarespace": true, "wix": true,
 	"webflow": true, "bigcommerce": true, "magento": true, "woocommerce": true,
 	"astra theme": true, "astra": true, "generatepress": true, "generatepress theme": true,
 	"divi": true, "elementor": true, "avada": true, "themeforest": true,
-	// Social & content platforms
+	// Social & content
 	"reddit": true, "quora": true, "pinterest": true, "youtube": true,
 	"instagram": true, "facebook": true, "twitter": true, "tiktok": true,
 	"linkedin": true, "snapchat": true, "tumblr": true,
 	// Search engines
 	"google": true, "bing": true, "yahoo": true, "duckduckgo": true,
-	// Pure marketplaces (no brand identity)
-	"amazon": true, "ebay": true, "aliexpress": true, "wish": true,
-	"shein": true, "temu": true, "walmart": true, "target": true, "etsy": true,
-	// Multi-brand jewelry / fashion retailers (aggregators, not DTC product brands)
-	// These appear frequently in mock model outputs but are retail channels, not brands.
+}
+
+var retailerNames = map[string]bool{
+	// Jewelry / accessories multi-brand retailers
 	"blue nile": true, "james allen": true, "brilliant earth": true,
 	"zales": true, "kay jewelers": true, "kay": true, "jared": true,
 	"helzberg": true, "signet": true, "h samuel": true, "ernest jones": true,
+	// Department & luxury stores
 	"nordstrom": true, "bloomingdales": true, "bloomingdale's": true,
 	"neiman marcus": true, "saks fifth avenue": true, "saks": true,
-	"macy's": true, "macys": true, "net-a-porter": true, "farfetch": true,
-	"revolve": true, "asos": true, "h&m": true, "zara": true, "uniqlo": true,
+	"macy's": true, "macys": true,
+	// Multi-brand fashion / lifestyle
+	"net-a-porter": true, "farfetch": true, "revolve": true, "asos": true,
+	"h&m": true, "zara": true, "uniqlo": true,
 	"forever 21": true, "forever21": true, "urban outfitters": true,
-	// Generic non-brand terms that models sometimes emit as competitors
+}
+
+var genericPhrases = map[string]bool{
 	"various brands": true, "multiple brands": true, "local brands": true,
 	"independent brands": true, "online retailers": true, "boutique stores": true,
 }
@@ -264,8 +298,10 @@ func scoreAndFilterCompetitors(rows []rawCompetitorRow, weights map[string]float
 	for _, r := range rows {
 		nameLower := strings.ToLower(strings.TrimSpace(r.Name))
 
-		// Hard-filter: known non-brand entities
-		if junkNames[nameLower] {
+		// Classify and filter: marketplace and platform entries are never competitors.
+		// Retailers are kept but labelled — they're real competition in a different category.
+		class := classifyCompetitor(nameLower)
+		if class == classMarketplace || class == classPlatform {
 			continue
 		}
 
@@ -316,6 +352,7 @@ func scoreAndFilterCompetitors(rows []rawCompetitorRow, weights map[string]float
 			TotalScans:        r.TotalScans,
 			Score:             score,
 			WhyPoints:         buildWhyPoints(r),
+			Class:             string(class),
 		})
 	}
 

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/austinokafor/geo-backend/internal/platform"
@@ -130,15 +131,16 @@ func GetQueryGaps(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]Qu
 
 // BrandRecognitionStatus describes how well AI models recognise the merchant's brand.
 type BrandRecognitionStatus struct {
-	// RecognitionRate is the fraction of grounded-platform queries where the brand
-	// was mentioned (0.0 – 1.0). Only grounded platforms are counted because
-	// model-memory platforms regularly fail to recognise small/new brands.
-	RecognitionRate   float64 `json:"recognition_rate"`
-	MentionedQueries  int     `json:"mentioned_queries"`
-	TotalQueries      int     `json:"total_queries"`
-	// IsRecognized is true when at least one grounded platform mentioned the brand
-	// in the most recent scan. False means AI has no knowledge of the brand.
-	IsRecognized      bool    `json:"is_recognized"`
+	RecognitionRate  float64  `json:"recognition_rate"`  // 0.0–1.0, grounded platforms only
+	MentionedQueries int      `json:"mentioned_queries"`
+	TotalQueries     int      `json:"total_queries"`
+	IsRecognized     bool     `json:"is_recognized"`
+	// Tier: "not_recognized" (0 mentions) | "weak" (1–2) | "recognized" (3+)
+	Tier             string   `json:"tier"`
+	// Reasons: human-readable explanations of the tier
+	Reasons          []string `json:"reasons"`
+	// Confidence: "high" (≥20 grounded queries) | "medium" (8–19) | "low" (<8)
+	Confidence       string   `json:"confidence"`
 }
 
 // GetBrandRecognitionStatus returns how well grounded AI platforms recognised
@@ -147,8 +149,8 @@ func GetBrandRecognitionStatus(ctx context.Context, db *pgxpool.Pool, merchantID
 	var status BrandRecognitionStatus
 	err := db.QueryRow(ctx, `
 		SELECT
-			COUNT(*)::int                                          AS total,
-			SUM(CASE WHEN mentioned THEN 1 ELSE 0 END)::int       AS mentioned
+			COUNT(*)::int                                    AS total,
+			SUM(CASE WHEN mentioned THEN 1 ELSE 0 END)::int AS mentioned
 		FROM citation_records
 		WHERE merchant_id = $1
 		  AND grounded = true
@@ -161,7 +163,54 @@ func GetBrandRecognitionStatus(ctx context.Context, db *pgxpool.Pool, merchantID
 		status.RecognitionRate = float64(status.MentionedQueries) / float64(status.TotalQueries)
 	}
 	status.IsRecognized = status.MentionedQueries > 0
+
+	// Tier
+	switch {
+	case status.MentionedQueries == 0:
+		status.Tier = "not_recognized"
+	case status.MentionedQueries <= 2:
+		status.Tier = "weak"
+	default:
+		status.Tier = "recognized"
+	}
+
+	// Confidence — based on how many grounded queries we have (more = more reliable)
+	switch {
+	case status.TotalQueries >= 20:
+		status.Confidence = "high"
+	case status.TotalQueries >= 8:
+		status.Confidence = "medium"
+	default:
+		status.Confidence = "low"
+	}
+
+	status.Reasons = buildRecognitionReasons(status.Tier, status.MentionedQueries, status.TotalQueries)
 	return status, nil
+}
+
+func buildRecognitionReasons(tier string, mentioned, total int) []string {
+	if total == 0 {
+		return []string{"No scan data available — run a scan to check brand recognition"}
+	}
+	switch tier {
+	case "not_recognized":
+		return []string{
+			fmt.Sprintf("Not found in any of %d web-grounded AI search queries", total),
+			"AI models have no awareness of your brand in trusted online sources",
+			"No structured product data detected that AI can reference",
+			"Missing brand authority signals: reviews, press mentions, and backlinks",
+		}
+	case "weak":
+		return []string{
+			fmt.Sprintf("Mentioned in only %d of %d queries — inconsistent signal", mentioned, total),
+			"Brand recognition is fragile and likely driven by a single source",
+			"Not yet establishing a reliable cross-platform presence pattern",
+		}
+	default:
+		return []string{
+			fmt.Sprintf("Mentioned in %d of %d web-grounded queries", mentioned, total),
+		}
+	}
 }
 
 // UpsertScanCost adds (or accumulates) daily cost for merchant+platform.

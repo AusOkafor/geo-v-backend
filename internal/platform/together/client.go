@@ -153,8 +153,15 @@ func parseResponse(raw, brandName string) platform.CitationResult {
 	var s structuredResult
 	parsed := false
 
+	// The stop sequence "}\n" causes the API to strip the final } from the JSON
+	// object. Restore it if the response is non-empty and doesn't end with }.
+	raw = strings.TrimSpace(raw)
+	if raw != "" && raw[len(raw)-1] != '}' {
+		raw = raw + "}"
+	}
+
 	// Try full response as JSON first (model instructed to output JSON only)
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &s); err == nil && (s.Mentioned || len(s.Competitors) > 0) {
+	if err := json.Unmarshal([]byte(raw), &s); err == nil && (s.Mentioned || len(s.Competitors) > 0) {
 		parsed = true
 	}
 	// Fallback: find the last { in case model prepended text

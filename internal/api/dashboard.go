@@ -154,6 +154,18 @@ func (h *Handler) RejectFix(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "rejected"})
 }
 
+func (h *Handler) GetQueryGaps(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	gaps, err := store.GetQueryGaps(c.Request().Context(), h.DB, m.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, gaps)
+}
+
 func (h *Handler) GetPlatformSources(c echo.Context) error {
 	m, err := h.getAuthMerchant(c)
 	if err != nil {

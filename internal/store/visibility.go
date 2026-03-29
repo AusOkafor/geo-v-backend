@@ -127,10 +127,38 @@ func GetDailyScores(ctx context.Context, db *pgxpool.Pool, merchantID int64, day
 	return scores, rows.Err()
 }
 
+// platformWeights returns a per-platform confidence weight based on whether the
+// platform's most recent scan results were web-grounded (1.0) or model-memory (0.35).
+// This prevents mocked platforms from inflating the competitor score.
+func platformWeights(ctx context.Context, db *pgxpool.Pool, merchantID int64) map[string]float64 {
+	weights := map[string]float64{"chatgpt": 0.35, "perplexity": 0.35, "gemini": 0.35}
+	rows, err := db.Query(ctx, `
+		SELECT platform, bool_or(grounded) AS grounded
+		FROM citation_records
+		WHERE merchant_id = $1
+		  AND scanned_at = (SELECT MAX(scanned_at) FROM citation_records WHERE merchant_id = $1)
+		GROUP BY platform
+	`, merchantID)
+	if err != nil {
+		return weights
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var platform string
+		var grounded bool
+		if rows.Scan(&platform, &grounded) == nil && grounded {
+			weights[platform] = 1.0
+		}
+	}
+	return weights
+}
+
 // GetCompetitors returns scored, filtered competitors for a merchant, last 30 days.
 // Results are pre-grouped by brand name, scored across frequency + platform breadth + position quality,
 // and filtered to remove junk (themes, social platforms, pure marketplaces).
 func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]ScoredCompetitor, error) {
+	weights := platformWeights(ctx, db, merchantID)
+
 	rows, err := db.Query(ctx, `
 		WITH scan_base AS (
 			SELECT id, platform, competitors
@@ -201,10 +229,10 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 		return nil, err
 	}
 
-	return scoreAndFilterCompetitors(raw), nil
+	return scoreAndFilterCompetitors(raw, weights), nil
 }
 
-func scoreAndFilterCompetitors(rows []rawCompetitorRow) []ScoredCompetitor {
+func scoreAndFilterCompetitors(rows []rawCompetitorRow, weights map[string]float64) []ScoredCompetitor {
 	if len(rows) == 0 {
 		return []ScoredCompetitor{}
 	}
@@ -232,11 +260,20 @@ func scoreAndFilterCompetitors(rows []rawCompetitorRow) []ScoredCompetitor {
 		}
 
 		// Composite score
-		//   50% frequency  — how often they're cited (primary signal)
-		//   30% platform   — cross-platform presence shows true dominance
-		//   20% position   — being cited first matters more than being cited 5th
+		//   50% frequency       — how often they're cited (primary signal)
+		//   30% platform reach  — weighted by grounding quality (grounded=1.0, mock=0.35)
+		//   20% position        — being cited first matters, but treat as soft signal
 		freqScore := float64(r.TotalFrequency) / float64(maxFreq)
-		platformScore := float64(r.PlatformCount) / 3.0
+
+		// Weighted platform score: grounded platforms count fully, mocks count at 0.35.
+		// Max possible weight = sum of all platform weights.
+		totalWeight := weights["chatgpt"] + weights["perplexity"] + weights["gemini"]
+		earnedWeight := 0.0
+		for _, p := range r.Platforms {
+			earnedWeight += weights[p]
+		}
+		platformScore := earnedWeight / totalWeight
+
 		posScore := 0.0
 		if r.BestPosition > 0 {
 			posScore = math.Max(0, float64(6-r.BestPosition)) / 5.0

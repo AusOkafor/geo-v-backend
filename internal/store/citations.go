@@ -77,6 +77,57 @@ func GetPlatformSources(ctx context.Context, db *pgxpool.Pool, merchantID int64)
 	return sources, rows.Err()
 }
 
+// QueryGap represents a query where the merchant was not mentioned on any platform.
+type QueryGap struct {
+	Query     string   `json:"query"`
+	Platforms []string `json:"platforms"` // platforms that ran this query
+}
+
+// GetQueryGaps returns queries from the most recent scan where the merchant was not mentioned
+// on any platform — i.e., total blind spots in AI visibility.
+func GetQueryGaps(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]QueryGap, error) {
+	rows, err := db.Query(ctx, `
+		WITH latest AS (
+			SELECT MAX(scanned_at) AS ts FROM citation_records WHERE merchant_id = $1
+		),
+		recent AS (
+			SELECT query, platform, mentioned
+			FROM citation_records, latest
+			WHERE merchant_id = $1
+			  AND scanned_at = latest.ts
+		),
+		per_query AS (
+			SELECT
+				query,
+				array_agg(DISTINCT platform ORDER BY platform) AS platforms,
+				bool_or(mentioned) AS any_mentioned
+			FROM recent
+			GROUP BY query
+		)
+		SELECT query, platforms
+		FROM per_query
+		WHERE NOT any_mentioned
+		ORDER BY query
+	`, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var gaps []QueryGap
+	for rows.Next() {
+		var g QueryGap
+		if err := rows.Scan(&g.Query, &g.Platforms); err != nil {
+			return nil, err
+		}
+		gaps = append(gaps, g)
+	}
+	if gaps == nil {
+		gaps = []QueryGap{}
+	}
+	return gaps, rows.Err()
+}
+
 // UpsertScanCost adds (or accumulates) daily cost for merchant+platform.
 func UpsertScanCost(ctx context.Context, db *pgxpool.Pool, merchantID int64, platformName string, tokensIn, tokensOut int, costUSD float64) error {
 	_, err := db.Exec(ctx, `

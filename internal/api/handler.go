@@ -40,6 +40,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	api.GET("/visibility/scores", h.GetVisibilityScores)
 	api.GET("/visibility/daily", h.GetDailyScores)
 	api.GET("/visibility/sources", h.GetPlatformSources)
+	api.GET("/visibility/gaps", h.GetQueryGaps)
 	api.GET("/competitors", h.GetCompetitors)
 	api.GET("/fixes", h.GetFixes)
 	api.GET("/fixes/:id", h.GetFix)

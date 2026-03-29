@@ -166,6 +166,38 @@ func (h *Handler) GetPlatformSources(c echo.Context) error {
 	return c.JSON(http.StatusOK, sources)
 }
 
+// GetScanStatus returns the state of the most recent scan job for the merchant.
+// State is one of: "none" | "pending" | "running" | "completed" | "failed"
+func (h *Handler) GetScanStatus(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+
+	// Query River's job table directly for the latest scan job for this merchant.
+	// river_jobs stores args as JSONB; we cast merchant_id from the JSON.
+	var state string
+	var attemptedAt *string
+	err = h.DB.QueryRow(c.Request().Context(), `
+		SELECT state, attempted_at::text
+		FROM river_jobs
+		WHERE kind = 'scan'
+		  AND (args->>'merchant_id')::bigint = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, m.ID).Scan(&state, &attemptedAt)
+
+	if err != nil {
+		// No scan job found — never scanned
+		return c.JSON(http.StatusOK, map[string]string{"state": "none"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"state":        state,
+		"attempted_at": attemptedAt,
+	})
+}
+
 func (h *Handler) TriggerScan(c echo.Context) error {
 	m, err := h.getAuthMerchant(c)
 	if err != nil {

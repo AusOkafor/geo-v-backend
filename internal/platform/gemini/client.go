@@ -171,6 +171,7 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	result.CostUSD = platform.CalcCost(c, result.TokensIn, result.TokensOut)
 	result.Duration = time.Since(start)
 	result.RawResponse = raw
+	result.Grounded = true // Gemini with real API uses Google Search grounding
 	return result, nil
 }
 

@@ -69,5 +69,6 @@ func (c *Client) Query(_ context.Context, brandName, prompt string) (platform.Ci
 		TokensOut:   120 + int(seed%80),
 		CostUSD:     0,
 		Duration:    time.Duration(40+seed%80) * time.Millisecond,
+		Grounded:    false, // mock client never does real web search
 	}, nil
 }

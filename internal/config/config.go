@@ -98,10 +98,6 @@ func (c *Config) validate() error {
 		"SHOPIFY_CLIENT_ID":      c.ShopifyClientID,
 		"SHOPIFY_SECRET_KEY":     c.ShopifySecretKey,
 		"SHOPIFY_WEBHOOK_SECRET": c.ShopifyWebhookSecret,
-		"OPENAI_KEY":             c.OpenAIKey,
-		"PERPLEXITY_KEY":         c.PerplexityKey,
-		"GEMINI_KEY":             c.GeminiKey,
-		"ANTHROPIC_KEY":          c.AnthropicKey,
 	}
 	for name, val := range required {
 		if val == "" {
@@ -110,6 +106,22 @@ func (c *Config) validate() error {
 	}
 	if len(c.EncryptionKey) != 32 {
 		return fmt.Errorf("config: ENCRYPTION_KEY must be exactly 32 characters, got %d", len(c.EncryptionKey))
+	}
+	// AI keys: at minimum need ANTHROPIC_KEY (fix generation) and either TOGETHER_KEY
+	// or all three platform keys (OPENAI_KEY, PERPLEXITY_KEY, GEMINI_KEY).
+	if c.AnthropicKey == "" && !c.MockAI {
+		return fmt.Errorf("config: ANTHROPIC_KEY is required (used for fix generation)")
+	}
+	if !c.MockAI && c.TogetherKey == "" {
+		if c.OpenAIKey == "" {
+			return fmt.Errorf("config: OPENAI_KEY is required when TOGETHER_KEY is not set")
+		}
+		if c.PerplexityKey == "" {
+			return fmt.Errorf("config: PERPLEXITY_KEY is required when TOGETHER_KEY is not set")
+		}
+		if c.GeminiKey == "" {
+			return fmt.Errorf("config: GEMINI_KEY is required when TOGETHER_KEY is not set")
+		}
 	}
 	return nil
 }

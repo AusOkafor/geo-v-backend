@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -15,7 +17,7 @@ import (
 const (
 	model    = "sonar"
 	endpoint = "https://api.perplexity.ai/chat/completions"
-	timeout  = 45 * time.Second
+	timeout  = 60 * time.Second // sonar does live web search, needs more time
 
 	inputCostPer1k  = 1.00 / 1000
 	outputCostPer1k = 1.00 / 1000
@@ -34,13 +36,14 @@ func New(apiKey string) *Client {
 	}
 }
 
-func (c *Client) Name() string                    { return "perplexity" }
-func (c *Client) InputCostPer1kTokens() float64   { return inputCostPer1k }
-func (c *Client) OutputCostPer1kTokens() float64  { return outputCostPer1k }
+func (c *Client) Name() string                   { return "perplexity" }
+func (c *Client) InputCostPer1kTokens() float64  { return inputCostPer1k }
+func (c *Client) OutputCostPer1kTokens() float64 { return outputCostPer1k }
 
 type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
+	Model     string    `json:"model"`
+	Messages  []message `json:"messages"`
+	MaxTokens int       `json:"max_tokens"`
 }
 
 type message struct {
@@ -61,6 +64,7 @@ type chatResponse struct {
 }
 
 type structuredResult struct {
+	Answer      string                `json:"answer"`
 	Mentioned   bool                  `json:"mentioned"`
 	Position    int                   `json:"position"`
 	Sentiment   string                `json:"sentiment"`
@@ -68,16 +72,25 @@ type structuredResult struct {
 }
 
 func systemPrompt(brandName string) string {
-	return fmt.Sprintf(`You are an AI search visibility analyst. When answering the user's question, note whether the brand "%s" is mentioned. After answering, return a JSON object:
-{"mentioned": bool, "position": int, "sentiment": "positive"|"neutral"|"negative"|"", "competitors": [{"name": string, "position": int}]}
-Where "position" is 1 if the brand is the first recommendation, 0 if not mentioned.`, brandName)
+	return fmt.Sprintf(`You are a shopping recommendation API. You must respond with ONLY valid JSON — no explanation, no text before or after the JSON.
+
+Given a shopping question, search the web for real brands and return this exact JSON structure:
+{"answer":"your recommendation text here","mentioned":false,"position":0,"sentiment":"","competitors":[{"name":"Brand A","position":1},{"name":"Brand B","position":2}]}
+
+Rules:
+- "answer": your full shopping recommendation (name real brands you found)
+- "mentioned": true if "%s" appears in answer
+- "position": rank of "%s" in answer (1=top pick, 2=second, 0=not mentioned)
+- "sentiment": "positive", "neutral", "negative", or "" for "%s"
+- "competitors": every brand named in answer with their rank — REQUIRED, never leave empty if you named brands`, brandName, brandName, brandName)
 }
 
 func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.CitationResult, error) {
 	start := time.Now()
 
 	reqBody := chatRequest{
-		Model: model,
+		Model:     model,
+		MaxTokens: 800,
 		Messages: []message{
 			{Role: "system", Content: systemPrompt(brandName)},
 			{Role: "user", Content: prompt},
@@ -99,7 +112,8 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return platform.CitationResult{}, fmt.Errorf("perplexity: HTTP %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return platform.CitationResult{}, fmt.Errorf("perplexity: HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
 	var chatResp chatResponse
@@ -112,6 +126,8 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 		raw = chatResp.Choices[0].Message.Content
 	}
 
+	slog.Debug("perplexity: raw response", "raw", raw)
+
 	result := parseResponse(raw, brandName)
 	result.Platform = c.Name()
 	result.Query = prompt
@@ -120,19 +136,61 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	result.CostUSD = platform.CalcCost(c, result.TokensIn, result.TokensOut)
 	result.Duration = time.Since(start)
 	result.RawResponse = raw
+	result.Grounded = true // Perplexity sonar = real-time web search grounded
 	return result, nil
 }
 
+// extractJSON pulls the first complete JSON object out of a mixed prose+JSON response.
+// Perplexity's sonar model sometimes wraps the JSON in markdown or prose.
+func extractJSON(raw string) string {
+	start := strings.Index(raw, "{")
+	if start < 0 {
+		return raw
+	}
+	end := strings.LastIndex(raw, "}")
+	if end <= start {
+		return raw
+	}
+	return raw[start : end+1]
+}
+
 func parseResponse(raw, brandName string) platform.CitationResult {
+	// sonar may wrap JSON in markdown fences or prose — extract the JSON object
+	candidate := extractJSON(strings.TrimSpace(raw))
+
 	var s structuredResult
-	if err := json.Unmarshal([]byte(raw), &s); err == nil {
+	if err := json.Unmarshal([]byte(candidate), &s); err == nil {
+		// Validate mentioned against the actual answer text
+		brandLower := strings.ToLower(brandName)
+		mentioned := strings.Contains(strings.ToLower(s.Answer), brandLower)
+
+		position := s.Position
+		if mentioned && position == 0 {
+			for _, comp := range s.Competitors {
+				if strings.EqualFold(comp.Name, brandName) {
+					position = comp.Position
+					break
+				}
+			}
+			if position == 0 {
+				position = 1
+			}
+		}
+
+		sentiment := s.Sentiment
+		if !mentioned {
+			sentiment = ""
+		}
+
 		return platform.CitationResult{
-			Mentioned:   s.Mentioned,
-			Position:    s.Position,
-			Sentiment:   s.Sentiment,
+			Mentioned:   mentioned,
+			Position:    position,
+			Sentiment:   sentiment,
 			Competitors: s.Competitors,
 		}
 	}
+
+	// Fallback: string search
 	mentioned := strings.Contains(strings.ToLower(raw), strings.ToLower(brandName))
 	return platform.CitationResult{Mentioned: mentioned}
 }

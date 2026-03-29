@@ -87,9 +87,17 @@ func main() {
 			geminiClient = together.New(cfg.TogetherKey, "gemini", "meta-llama/Meta-Llama-3-8B-Instruct-Lite")
 		}
 
+		var perplexityClient platform.AIClient
+		if cfg.PerplexityKey != "" {
+			slog.Info("PERPLEXITY_KEY set — using real Perplexity API for perplexity scans")
+			perplexityClient = perplexity.New(cfg.PerplexityKey)
+		} else {
+			perplexityClient = together.New(cfg.TogetherKey, "perplexity", "meta-llama/Meta-Llama-3-8B-Instruct-Lite")
+		}
+
 		aiClients = []platform.AIClient{
 			chatgptClient,
-			together.New(cfg.TogetherKey, "perplexity", "meta-llama/Meta-Llama-3-8B-Instruct-Lite"),
+			perplexityClient,
 			geminiClient,
 		}
 		if cfg.AnthropicKey != "" {

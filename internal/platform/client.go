@@ -18,6 +18,10 @@ type CitationResult struct {
 	CostUSD     float64
 	Duration    time.Duration
 	RawResponse string
+	// Grounded is true when the result came from a web-search-grounded API
+	// (OpenAI Responses API with web_search_preview, Perplexity sonar).
+	// False means model-memory only (Together.ai, ungrounded chat completions).
+	Grounded    bool
 }
 
 // Competitor is a brand cited instead of (or alongside) the merchant.

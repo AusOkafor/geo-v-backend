@@ -81,17 +81,17 @@ type structuredResult struct {
 }
 
 func systemPrompt(brandName string) string {
-	return fmt.Sprintf(`You are a shopping recommendation API. You must respond with ONLY valid JSON — no explanation, no text before or after the JSON.
+	return fmt.Sprintf(`You are a shopping AI assistant. Answer the shopping question using your training knowledge, then respond with ONLY valid JSON.
 
-Given a shopping question, recommend real brands and return this exact JSON structure:
+Return this exact JSON structure:
 {"answer":"your recommendation text here","mentioned":false,"position":0,"sentiment":"","competitors":[{"name":"Brand A","position":1},{"name":"Brand B","position":2}]}
 
 Rules:
-- "answer": your full shopping recommendation (name real brands)
+- "answer": your shopping recommendation — only name brands you are confident are real and relevant
 - "mentioned": true if "%s" appears in answer
 - "position": rank of "%s" in answer (1=top pick, 2=second, 0=not mentioned)
 - "sentiment": "positive", "neutral", "negative", or "" for "%s"
-- "competitors": every brand named in answer with their rank — REQUIRED, never leave empty if you named brands`, brandName, brandName, brandName)
+- "competitors": brands you named in answer with their rank — leave as [] if you are not confident about which brands to list`, brandName, brandName, brandName)
 }
 
 func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.CitationResult, error) {
@@ -146,6 +146,7 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	result.CostUSD = platform.CalcCost(c, result.TokensIn, result.TokensOut)
 	result.Duration = time.Since(start)
 	result.RawResponse = raw
+	result.Grounded = false // Together.ai = model memory only, no web search
 	return result, nil
 }
 

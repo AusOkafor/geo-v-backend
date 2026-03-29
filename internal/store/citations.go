@@ -21,8 +21,8 @@ func InsertCitationRecord(ctx context.Context, db *pgxpool.Pool, merchantID int6
 
 	_, err = db.Exec(ctx, `
 		INSERT INTO citation_records
-			(merchant_id, platform, query, query_type, mentioned, position, sentiment, competitors, tokens_used, cost_usd)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			(merchant_id, platform, query, query_type, mentioned, position, sentiment, competitors, tokens_used, cost_usd, grounded)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`,
 		merchantID,
 		r.Platform,
@@ -34,8 +34,47 @@ func InsertCitationRecord(ctx context.Context, db *pgxpool.Pool, merchantID int6
 		competitorsJSON,
 		r.TokensIn+r.TokensOut,
 		r.CostUSD,
+		r.Grounded,
 	)
 	return err
+}
+
+// PlatformSource describes how a platform's last scan was performed.
+type PlatformSource struct {
+	Platform string `json:"platform"`
+	Grounded bool   `json:"grounded"` // true = real web search; false = model memory only
+}
+
+// GetPlatformSources returns grounding status per platform based on the most recent scan day.
+// Used by the frontend to show "Web-grounded" vs "AI prediction" badges.
+func GetPlatformSources(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]PlatformSource, error) {
+	rows, err := db.Query(ctx, `
+		SELECT platform, bool_or(grounded) AS grounded
+		FROM citation_records
+		WHERE merchant_id = $1
+		  AND scanned_at = (
+		      SELECT MAX(scanned_at) FROM citation_records WHERE merchant_id = $1
+		  )
+		GROUP BY platform
+		ORDER BY platform
+	`, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sources []PlatformSource
+	for rows.Next() {
+		var s PlatformSource
+		if err := rows.Scan(&s.Platform, &s.Grounded); err != nil {
+			return nil, err
+		}
+		sources = append(sources, s)
+	}
+	if sources == nil {
+		sources = []PlatformSource{}
+	}
+	return sources, rows.Err()
 }
 
 // UpsertScanCost adds (or accumulates) daily cost for merchant+platform.

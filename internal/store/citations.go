@@ -128,6 +128,42 @@ func GetQueryGaps(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]Qu
 	return gaps, rows.Err()
 }
 
+// BrandRecognitionStatus describes how well AI models recognise the merchant's brand.
+type BrandRecognitionStatus struct {
+	// RecognitionRate is the fraction of grounded-platform queries where the brand
+	// was mentioned (0.0 – 1.0). Only grounded platforms are counted because
+	// model-memory platforms regularly fail to recognise small/new brands.
+	RecognitionRate   float64 `json:"recognition_rate"`
+	MentionedQueries  int     `json:"mentioned_queries"`
+	TotalQueries      int     `json:"total_queries"`
+	// IsRecognized is true when at least one grounded platform mentioned the brand
+	// in the most recent scan. False means AI has no knowledge of the brand.
+	IsRecognized      bool    `json:"is_recognized"`
+}
+
+// GetBrandRecognitionStatus returns how well grounded AI platforms recognised
+// the merchant's brand in their most recent scan.
+func GetBrandRecognitionStatus(ctx context.Context, db *pgxpool.Pool, merchantID int64) (BrandRecognitionStatus, error) {
+	var status BrandRecognitionStatus
+	err := db.QueryRow(ctx, `
+		SELECT
+			COUNT(*)::int                                          AS total,
+			SUM(CASE WHEN mentioned THEN 1 ELSE 0 END)::int       AS mentioned
+		FROM citation_records
+		WHERE merchant_id = $1
+		  AND grounded = true
+		  AND scanned_at = (SELECT MAX(scanned_at) FROM citation_records WHERE merchant_id = $1)
+	`, merchantID).Scan(&status.TotalQueries, &status.MentionedQueries)
+	if err != nil {
+		return status, err
+	}
+	if status.TotalQueries > 0 {
+		status.RecognitionRate = float64(status.MentionedQueries) / float64(status.TotalQueries)
+	}
+	status.IsRecognized = status.MentionedQueries > 0
+	return status, nil
+}
+
 // UpsertScanCost adds (or accumulates) daily cost for merchant+platform.
 func UpsertScanCost(ctx context.Context, db *pgxpool.Pool, merchantID int64, platformName string, tokensIn, tokensOut int, costUSD float64) error {
 	_, err := db.Exec(ctx, `

@@ -154,6 +154,19 @@ func (h *Handler) RejectFix(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "rejected"})
 }
 
+func (h *Handler) GetBrandRecognition(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	status, err := store.GetBrandRecognitionStatus(c.Request().Context(), h.DB, m.ID)
+	if err != nil {
+		// No scan yet — return a zero-value status rather than an error
+		return c.JSON(http.StatusOK, store.BrandRecognitionStatus{})
+	}
+	return c.JSON(http.StatusOK, status)
+}
+
 func (h *Handler) GetQueryGaps(c echo.Context) error {
 	m, err := h.getAuthMerchant(c)
 	if err != nil {

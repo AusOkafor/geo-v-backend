@@ -182,6 +182,16 @@ func aggregateResults(results []platform.CitationResult) platform.CitationResult
 		base.Position = 0
 	}
 
+	// Consistency enforcement:
+	// - mentioned=true requires position >= 1 (default to 1 if missing)
+	// - mentioned=false requires position = 0
+	if base.Mentioned && base.Position == 0 {
+		base.Position = 1
+	}
+	if !base.Mentioned {
+		base.Position = 0
+	}
+
 	// Average cost/tokens across all runs
 	base.TokensIn = totalTokensIn / len(results)
 	base.TokensOut = totalTokensOut / len(results)

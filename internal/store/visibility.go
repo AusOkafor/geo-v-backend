@@ -56,7 +56,20 @@ var junkNames = map[string]bool{
 	"google": true, "bing": true, "yahoo": true, "duckduckgo": true,
 	// Pure marketplaces (no brand identity)
 	"amazon": true, "ebay": true, "aliexpress": true, "wish": true,
-	"shein": true, "temu": true,
+	"shein": true, "temu": true, "walmart": true, "target": true, "etsy": true,
+	// Multi-brand jewelry / fashion retailers (aggregators, not DTC product brands)
+	// These appear frequently in mock model outputs but are retail channels, not brands.
+	"blue nile": true, "james allen": true, "brilliant earth": true,
+	"zales": true, "kay jewelers": true, "kay": true, "jared": true,
+	"helzberg": true, "signet": true, "h samuel": true, "ernest jones": true,
+	"nordstrom": true, "bloomingdales": true, "bloomingdale's": true,
+	"neiman marcus": true, "saks fifth avenue": true, "saks": true,
+	"macy's": true, "macys": true, "net-a-porter": true, "farfetch": true,
+	"revolve": true, "asos": true, "h&m": true, "zara": true, "uniqlo": true,
+	"forever 21": true, "forever21": true, "urban outfitters": true,
+	// Generic non-brand terms that models sometimes emit as competitors
+	"various brands": true, "multiple brands": true, "local brands": true,
+	"independent brands": true, "online retailers": true, "boutique stores": true,
 }
 
 type rawCompetitorRow struct {
@@ -131,7 +144,9 @@ func GetDailyScores(ctx context.Context, db *pgxpool.Pool, merchantID int64, day
 // platform's most recent scan results were web-grounded (1.0) or model-memory (0.35).
 // This prevents mocked platforms from inflating the competitor score.
 func platformWeights(ctx context.Context, db *pgxpool.Pool, merchantID int64) map[string]float64 {
-	weights := map[string]float64{"chatgpt": 0.35, "perplexity": 0.35, "gemini": 0.35}
+	// Default: 0.2 for model-memory platforms (Together/mock).
+	// Grounded platforms (OpenAI web search, Perplexity sonar) are upgraded to 1.0.
+	weights := map[string]float64{"chatgpt": 0.2, "perplexity": 0.2, "gemini": 0.2}
 	rows, err := db.Query(ctx, `
 		SELECT platform, bool_or(grounded) AS grounded
 		FROM citation_records

@@ -30,13 +30,14 @@ type DailyScore struct {
 
 // ScoredCompetitor is a filtered, scored competitor with explanations.
 type ScoredCompetitor struct {
-	Name           string   `json:"name"`
-	Platforms      []string `json:"platforms"`
-	BestPosition   int      `json:"best_position"`
-	TotalFrequency int      `json:"total_frequency"`
-	TotalScans     int      `json:"total_scans"`
-	Score          float64  `json:"score"`
-	WhyPoints      []string `json:"why_points"`
+	Name              string         `json:"name"`
+	Platforms         []string       `json:"platforms"`
+	BestPosition      int            `json:"best_position"`
+	PlatformPositions map[string]int `json:"platform_positions"`
+	TotalFrequency    int            `json:"total_frequency"`
+	TotalScans        int            `json:"total_scans"`
+	Score             float64        `json:"score"`
+	WhyPoints         []string       `json:"why_points"`
 }
 
 // junkNames are non-brand entities that should never appear as competitors.
@@ -65,6 +66,9 @@ type rawCompetitorRow struct {
 	TotalFrequency int
 	PlatformCount  int
 	TotalScans     int
+	ChatGPTPos     *int
+	PerplexityPos  *int
+	GeminiPos      *int
 }
 
 // GetVisibilityScores returns the latest visibility score per platform within N days.
@@ -154,7 +158,10 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 				COALESCE(array_agg(DISTINCT platform), ARRAY[]::text[])  AS platforms,
 				COALESCE(MIN(CASE WHEN position > 0 THEN position END), 0) AS best_position,
 				COUNT(*)::int                                              AS total_frequency,
-				COUNT(DISTINCT platform)::int                             AS platform_count
+				COUNT(DISTINCT platform)::int                             AS platform_count,
+				MIN(CASE WHEN platform = 'chatgpt'    AND position > 0 THEN position END) AS chatgpt_pos,
+				MIN(CASE WHEN platform = 'perplexity' AND position > 0 THEN position END) AS perplexity_pos,
+				MIN(CASE WHEN platform = 'gemini'     AND position > 0 THEN position END) AS gemini_pos
 			FROM expanded
 			GROUP BY name
 		)
@@ -164,7 +171,10 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 			g.best_position,
 			g.total_frequency,
 			g.platform_count,
-			t.n AS total_scans
+			t.n AS total_scans,
+			g.chatgpt_pos,
+			g.perplexity_pos,
+			g.gemini_pos
 		FROM grouped g
 		CROSS JOIN total_scans t
 		ORDER BY g.total_frequency DESC, g.platform_count DESC
@@ -181,6 +191,7 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 		if err := rows.Scan(
 			&r.Name, &r.Platforms, &r.BestPosition,
 			&r.TotalFrequency, &r.PlatformCount, &r.TotalScans,
+			&r.ChatGPTPos, &r.PerplexityPos, &r.GeminiPos,
 		); err != nil {
 			return nil, err
 		}
@@ -233,14 +244,26 @@ func scoreAndFilterCompetitors(rows []rawCompetitorRow) []ScoredCompetitor {
 		score := 0.5*freqScore + 0.3*platformScore + 0.2*posScore
 		score = math.Round(score*100) / 100
 
+		platPos := map[string]int{}
+		if r.ChatGPTPos != nil {
+			platPos["chatgpt"] = *r.ChatGPTPos
+		}
+		if r.PerplexityPos != nil {
+			platPos["perplexity"] = *r.PerplexityPos
+		}
+		if r.GeminiPos != nil {
+			platPos["gemini"] = *r.GeminiPos
+		}
+
 		scored = append(scored, ScoredCompetitor{
-			Name:           r.Name,
-			Platforms:      r.Platforms,
-			BestPosition:   r.BestPosition,
-			TotalFrequency: r.TotalFrequency,
-			TotalScans:     r.TotalScans,
-			Score:          score,
-			WhyPoints:      buildWhyPoints(r),
+			Name:              r.Name,
+			Platforms:         r.Platforms,
+			BestPosition:      r.BestPosition,
+			PlatformPositions: platPos,
+			TotalFrequency:    r.TotalFrequency,
+			TotalScans:        r.TotalScans,
+			Score:             score,
+			WhyPoints:         buildWhyPoints(r),
 		})
 	}
 

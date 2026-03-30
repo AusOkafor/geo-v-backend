@@ -20,7 +20,6 @@ import (
 	"github.com/austinokafor/geo-backend/internal/platform/mock"
 	"github.com/austinokafor/geo-backend/internal/platform/openai"
 	"github.com/austinokafor/geo-backend/internal/platform/perplexity"
-	"github.com/austinokafor/geo-backend/internal/platform/together"
 )
 
 func main() {
@@ -57,7 +56,7 @@ func main() {
 
 	encKey := []byte(cfg.EncryptionKey)
 
-	// AI clients — use mocks when MOCK_AI=true to avoid API costs in dev/staging
+	// AI clients — always use real APIs; MOCK_AI=true only for local dev
 	var aiClients []platform.AIClient
 	var fixGenerator fix.Generatable
 	if cfg.MockAI {
@@ -68,44 +67,13 @@ func main() {
 			mock.New("gemini"),
 		}
 		fixGenerator = fix.NewMockGenerator()
-	} else if cfg.TogetherKey != "" {
-		// Use Together.ai as the base mock for any slot without a real key.
-		// Real keys override their respective slot.
-		var chatgptClient platform.AIClient
-		if cfg.OpenAIKey != "" {
-			slog.Info("OPENAI_KEY set — using real OpenAI API for chatgpt scans")
-			chatgptClient = openai.New(cfg.OpenAIKey)
-		} else {
-			chatgptClient = together.New(cfg.TogetherKey, "chatgpt", "meta-llama/Meta-Llama-3-8B-Instruct-Lite")
-		}
-
-		var geminiClient platform.AIClient
-		if cfg.GeminiKey != "" {
-			slog.Info("GEMINI_KEY set — using real Gemini API for gemini scans")
-			geminiClient = gemini.New(cfg.GeminiKey)
-		} else {
-			geminiClient = together.New(cfg.TogetherKey, "gemini", "meta-llama/Meta-Llama-3-8B-Instruct-Lite")
-		}
-
-		var perplexityClient platform.AIClient
-		if cfg.PerplexityKey != "" {
-			slog.Info("PERPLEXITY_KEY set — using real Perplexity API for perplexity scans")
-			perplexityClient = perplexity.New(cfg.PerplexityKey)
-		} else {
-			perplexityClient = together.New(cfg.TogetherKey, "perplexity", "meta-llama/Meta-Llama-3-8B-Instruct-Lite")
-		}
-
-		aiClients = []platform.AIClient{
-			chatgptClient,
-			perplexityClient,
-			geminiClient,
-		}
-		if cfg.AnthropicKey != "" {
-			fixGenerator = fix.NewGenerator(cfg.AnthropicKey)
-		} else {
-			fixGenerator = fix.NewMockGenerator()
-		}
 	} else {
+		slog.Info("using real AI APIs",
+			"openai", cfg.OpenAIKey != "",
+			"perplexity", cfg.PerplexityKey != "",
+			"gemini", cfg.GeminiKey != "",
+			"anthropic", cfg.AnthropicKey != "",
+		)
 		aiClients = []platform.AIClient{
 			openai.New(cfg.OpenAIKey),
 			perplexity.New(cfg.PerplexityKey),

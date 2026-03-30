@@ -107,20 +107,19 @@ func (c *Config) validate() error {
 	if len(c.EncryptionKey) != 32 {
 		return fmt.Errorf("config: ENCRYPTION_KEY must be exactly 32 characters, got %d", len(c.EncryptionKey))
 	}
-	// AI keys: at minimum need ANTHROPIC_KEY (fix generation) and either TOGETHER_KEY
-	// or all three platform keys (OPENAI_KEY, PERPLEXITY_KEY, GEMINI_KEY).
-	if c.AnthropicKey == "" && !c.MockAI {
-		return fmt.Errorf("config: ANTHROPIC_KEY is required (used for fix generation)")
-	}
-	if !c.MockAI && c.TogetherKey == "" {
+	// AI keys required in production (MOCK_AI=true bypasses these for local dev only)
+	if !c.MockAI {
+		if c.AnthropicKey == "" {
+			return fmt.Errorf("config: ANTHROPIC_KEY is required (used for fix generation)")
+		}
 		if c.OpenAIKey == "" {
-			return fmt.Errorf("config: OPENAI_KEY is required when TOGETHER_KEY is not set")
+			return fmt.Errorf("config: OPENAI_KEY is required")
 		}
 		if c.PerplexityKey == "" {
-			return fmt.Errorf("config: PERPLEXITY_KEY is required when TOGETHER_KEY is not set")
+			return fmt.Errorf("config: PERPLEXITY_KEY is required")
 		}
 		if c.GeminiKey == "" {
-			return fmt.Errorf("config: GEMINI_KEY is required when TOGETHER_KEY is not set")
+			return fmt.Errorf("config: GEMINI_KEY is required")
 		}
 	}
 	return nil

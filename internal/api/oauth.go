@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
-	"github.com/riverqueue/river"
 	"github.com/austinokafor/geo-backend/internal/auth"
 	"github.com/austinokafor/geo-backend/internal/crypto"
 	"github.com/austinokafor/geo-backend/internal/jobs"
@@ -126,13 +125,11 @@ func (h *Handler) OAuthCallback(c echo.Context) error {
 		}
 	}
 
-	// Enqueue initial high-priority scan + product sync
-	if _, err = h.River.InsertMany(c.Request().Context(), []river.InsertManyParams{
-		{Args: jobs.ProductSyncJobArgs{MerchantID: merchant.ID, Full: true}},
-		{Args: jobs.ScanJobArgs{MerchantID: merchant.ID, Priority: "high"}},
-	}); err != nil {
+	// Enqueue initial product sync — scan is triggered manually from the dashboard
+	if _, err = h.River.Insert(c.Request().Context(),
+		jobs.ProductSyncJobArgs{MerchantID: merchant.ID, Full: true}, nil); err != nil {
 		// Non-fatal — log so we can diagnose if jobs are missing
-		slog.Error("oauth: failed to enqueue initial jobs", "merchant_id", merchant.ID, "err", err)
+		slog.Error("oauth: failed to enqueue product sync", "merchant_id", merchant.ID, "err", err)
 	}
 
 	// Issue a signed JWT so the token can't be forged by knowing the shop domain

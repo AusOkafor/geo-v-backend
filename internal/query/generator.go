@@ -1,6 +1,9 @@
 package query
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // QueryType classifies what kind of intent the query tests.
 type QueryType string
@@ -20,11 +23,26 @@ type Query struct {
 	QueryType QueryType
 }
 
+// cleanCategory strips Shopify product-type noise from the category string.
+// e.g. "Fine Jewelry (14k/18k gold pieces from Supply Dark)" → "Fine Jewelry"
+func cleanCategory(cat string) string {
+	// Strip parenthetical suffix
+	if idx := strings.Index(cat, "("); idx > 0 {
+		cat = strings.TrimSpace(cat[:idx])
+	}
+	// Strip anything after a pipe or slash (e.g. "Clothing / T-Shirts")
+	if idx := strings.IndexAny(cat, "|/"); idx > 0 {
+		cat = strings.TrimSpace(cat[:idx])
+	}
+	return cat
+}
+
 // Generate produces ~35 queries for a merchant's category and brand name.
 func Generate(category, brandName string) []Query {
 	if category == "" {
 		category = "products"
 	}
+	category = cleanCategory(category)
 
 	var queries []Query
 

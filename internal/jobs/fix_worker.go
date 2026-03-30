@@ -56,7 +56,17 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		products = nil // non-fatal — fixes without a GID are still useful
 	}
 
-	// Find platforms with score < 15% and no pending fix of that type
+	// If no visibility scores exist yet (first scan, aggregation may not have run),
+	// treat all platforms as score=0 so fixes are still generated.
+	if len(scores) == 0 {
+		scores = []store.VisibilityScore{
+			{Platform: "chatgpt", Score: 0},
+			{Platform: "perplexity", Score: 0},
+			{Platform: "gemini", Score: 0},
+		}
+	}
+
+	// Find platforms with score < 80 and no pending fix of that type
 	existingFixes, _ := store.GetFixes(ctx, w.db, merchant.ID, "pending")
 	existingTypes := map[fix.FixType]bool{}
 	existingTargets := map[string]bool{} // GIDs already targeted by a pending description fix

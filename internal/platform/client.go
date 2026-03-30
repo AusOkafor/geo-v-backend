@@ -18,10 +18,14 @@ type CitationResult struct {
 	CostUSD     float64
 	Duration    time.Duration
 	RawResponse string
+	// AnswerText is the human-readable recommendation text extracted from the
+	// structured JSON response. Stored separately so the dashboard can surface
+	// real AI answers without re-parsing the raw JSON blob.
+	AnswerText string
 	// Grounded is true when the result came from a web-search-grounded API
 	// (OpenAI Responses API with web_search_preview, Perplexity sonar).
 	// False means model-memory only (Together.ai, ungrounded chat completions).
-	Grounded    bool
+	Grounded bool
 }
 
 // Competitor is a brand cited instead of (or alongside) the merchant.

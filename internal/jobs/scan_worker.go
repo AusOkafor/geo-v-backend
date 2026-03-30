@@ -76,7 +76,7 @@ func (w *ScanWorker) Work(ctx context.Context, job *river.Job[ScanJobArgs]) erro
 			result := aggregateResults(results)
 			result.Query = q.Text
 
-			if err := store.InsertCitationRecord(ctx, w.db, merchantID, result); err != nil {
+			if err := store.InsertCitationRecord(ctx, w.db, merchantID, string(q.QueryType), result); err != nil {
 				return fmt.Errorf("scan: insert citation: %w", err)
 			}
 			if err := store.UpsertScanCost(ctx, w.db, merchantID, result.Platform, result.TokensIn, result.TokensOut, result.CostUSD); err != nil {

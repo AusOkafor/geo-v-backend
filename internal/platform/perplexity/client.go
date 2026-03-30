@@ -187,6 +187,7 @@ func parseResponse(raw, brandName string) platform.CitationResult {
 			Position:    position,
 			Sentiment:   sentiment,
 			Competitors: s.Competitors,
+			AnswerText:  s.Answer,
 		}
 	}
 

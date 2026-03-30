@@ -10,7 +10,9 @@ import (
 )
 
 // InsertCitationRecord saves one AI scan result to citation_records.
-func InsertCitationRecord(ctx context.Context, db *pgxpool.Pool, merchantID int64, r platform.CitationResult) error {
+// queryType comes from the query generator (e.g. "price_bracket", "brand") and is
+// caller-supplied because it is metadata about the question, not the AI response.
+func InsertCitationRecord(ctx context.Context, db *pgxpool.Pool, merchantID int64, queryType string, r platform.CitationResult) error {
 	competitors := r.Competitors
 	if competitors == nil {
 		competitors = []platform.Competitor{}
@@ -22,13 +24,13 @@ func InsertCitationRecord(ctx context.Context, db *pgxpool.Pool, merchantID int6
 
 	_, err = db.Exec(ctx, `
 		INSERT INTO citation_records
-			(merchant_id, platform, query, query_type, mentioned, position, sentiment, competitors, tokens_used, cost_usd, grounded)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			(merchant_id, platform, query, query_type, mentioned, position, sentiment, competitors, tokens_used, cost_usd, grounded, answer_text)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`,
 		merchantID,
 		r.Platform,
 		r.Query,
-		"", // query_type populated by caller if needed
+		queryType,
 		r.Mentioned,
 		r.Position,
 		r.Sentiment,
@@ -36,6 +38,7 @@ func InsertCitationRecord(ctx context.Context, db *pgxpool.Pool, merchantID int6
 		r.TokensIn+r.TokensOut,
 		r.CostUSD,
 		r.Grounded,
+		r.AnswerText,
 	)
 	return err
 }
@@ -47,7 +50,6 @@ type PlatformSource struct {
 }
 
 // GetPlatformSources returns grounding status per platform based on the most recent scan day.
-// Used by the frontend to show "Web-grounded" vs "AI prediction" badges.
 func GetPlatformSources(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]PlatformSource, error) {
 	rows, err := db.Query(ctx, `
 		SELECT platform, bool_or(grounded) AS grounded
@@ -79,20 +81,26 @@ func GetPlatformSources(ctx context.Context, db *pgxpool.Pool, merchantID int64)
 }
 
 // QueryGap represents a query where the merchant was not mentioned on any platform.
+// CompetitorCount is the average number of distinct competitors cited across platforms
+// for this query — a proxy for how much opportunity exists (AI knows the topic well).
 type QueryGap struct {
-	Query     string   `json:"query"`
-	Platforms []string `json:"platforms"` // platforms that ran this query
+	Query           string   `json:"query"`
+	QueryType       string   `json:"query_type"`
+	Platforms       []string `json:"platforms"`
+	CompetitorCount int      `json:"competitor_count"`
+	Impact          string   `json:"impact"`     // "high" | "medium" | "low"
+	Difficulty      string   `json:"difficulty"` // "hard" | "medium" | "easy"
 }
 
-// GetQueryGaps returns queries from the most recent scan where the merchant was not mentioned
-// on any platform — i.e., total blind spots in AI visibility.
+// GetQueryGaps returns queries from the most recent scan where the merchant was not
+// mentioned, enriched with opportunity signals (competitor density, impact, difficulty).
 func GetQueryGaps(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]QueryGap, error) {
 	rows, err := db.Query(ctx, `
 		WITH latest AS (
 			SELECT MAX(scanned_at) AS ts FROM citation_records WHERE merchant_id = $1
 		),
 		recent AS (
-			SELECT query, platform, mentioned
+			SELECT query, query_type, platform, mentioned, competitors
 			FROM citation_records, latest
 			WHERE merchant_id = $1
 			  AND scanned_at = latest.ts
@@ -100,15 +108,21 @@ func GetQueryGaps(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]Qu
 		per_query AS (
 			SELECT
 				query,
-				array_agg(DISTINCT platform ORDER BY platform) AS platforms,
-				bool_or(mentioned) AS any_mentioned
+				MAX(query_type)                                         AS query_type,
+				array_agg(DISTINCT platform ORDER BY platform)          AS platforms,
+				bool_or(mentioned)                                      AS any_mentioned,
+				-- Count distinct competitor names across all platforms for this query
+				COUNT(DISTINCT comp->>'name')::int                      AS competitor_count
 			FROM recent
+			LEFT JOIN LATERAL jsonb_array_elements(
+				CASE WHEN jsonb_typeof(competitors) = 'array' THEN competitors ELSE '[]'::jsonb END
+			) AS comp ON TRUE
 			GROUP BY query
 		)
-		SELECT query, platforms
+		SELECT query, query_type, platforms, competitor_count
 		FROM per_query
 		WHERE NOT any_mentioned
-		ORDER BY query
+		ORDER BY competitor_count DESC, query
 	`, merchantID)
 	if err != nil {
 		return nil, err
@@ -118,15 +132,101 @@ func GetQueryGaps(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]Qu
 	var gaps []QueryGap
 	for rows.Next() {
 		var g QueryGap
-		if err := rows.Scan(&g.Query, &g.Platforms); err != nil {
+		if err := rows.Scan(&g.Query, &g.QueryType, &g.Platforms, &g.CompetitorCount); err != nil {
 			return nil, err
 		}
+		g.Impact = opportunityImpact(g.CompetitorCount)
+		g.Difficulty = opportunityDifficulty(g.CompetitorCount)
 		gaps = append(gaps, g)
 	}
 	if gaps == nil {
 		gaps = []QueryGap{}
 	}
 	return gaps, rows.Err()
+}
+
+// opportunityImpact maps competitor density to how much creating content for this
+// query could move the needle. More competitors = AI definitely knows the topic.
+func opportunityImpact(competitorCount int) string {
+	switch {
+	case competitorCount >= 5:
+		return "high"
+	case competitorCount >= 3:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+// opportunityDifficulty estimates how hard it is to break into a query's results.
+// Many competitors = entrenched recommendations = harder to displace.
+func opportunityDifficulty(competitorCount int) string {
+	switch {
+	case competitorCount >= 7:
+		return "hard"
+	case competitorCount >= 4:
+		return "medium"
+	default:
+		return "easy"
+	}
+}
+
+// LiveAnswer is a single AI platform response from the most recent scan,
+// surfaced verbatim so merchants can see exactly what AI says (and who it cites).
+type LiveAnswer struct {
+	Query          string   `json:"query"`
+	Platform       string   `json:"platform"`
+	AnswerText     string   `json:"answer_text"`
+	Competitors    []string `json:"competitors"`    // competitor names in cited order
+	BrandMentioned bool     `json:"brand_mentioned"`
+}
+
+// GetLiveAnswers returns up to limit answers from the most recent scan,
+// ordered by query then platform, skipping rows with no answer text.
+func GetLiveAnswers(ctx context.Context, db *pgxpool.Pool, merchantID int64, limit int) ([]LiveAnswer, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := db.Query(ctx, `
+		SELECT query, platform, answer_text, competitors, mentioned
+		FROM citation_records
+		WHERE merchant_id = $1
+		  AND answer_text IS NOT NULL
+		  AND answer_text != ''
+		  AND scanned_at = (SELECT MAX(scanned_at) FROM citation_records WHERE merchant_id = $1)
+		ORDER BY query, platform
+		LIMIT $2
+	`, merchantID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store.GetLiveAnswers: %w", err)
+	}
+	defer rows.Close()
+
+	var answers []LiveAnswer
+	for rows.Next() {
+		var a LiveAnswer
+		var competitorsJSON []byte
+		if err := rows.Scan(&a.Query, &a.Platform, &a.AnswerText, &competitorsJSON, &a.BrandMentioned); err != nil {
+			return nil, err
+		}
+		// Extract just the names in order
+		var comps []platform.Competitor
+		if err := json.Unmarshal(competitorsJSON, &comps); err == nil {
+			for _, c := range comps {
+				if c.Name != "" {
+					a.Competitors = append(a.Competitors, c.Name)
+				}
+			}
+		}
+		if a.Competitors == nil {
+			a.Competitors = []string{}
+		}
+		answers = append(answers, a)
+	}
+	if answers == nil {
+		answers = []LiveAnswer{}
+	}
+	return answers, rows.Err()
 }
 
 // BrandRecognitionStatus describes how well AI models recognise the merchant's brand.

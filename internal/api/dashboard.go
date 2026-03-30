@@ -272,6 +272,43 @@ func (h *Handler) TriggerSync(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "queued"})
 }
 
+func (h *Handler) GetLiveAnswers(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	limit := queryInt(c, "limit", 20)
+	answers, err := store.GetLiveAnswers(c.Request().Context(), h.DB, m.ID, limit)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, answers)
+}
+
+func (h *Handler) GetAIReadiness(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	score, err := store.GetAIReadinessScore(c.Request().Context(), h.DB, m.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, score)
+}
+
+func (h *Handler) GetNextActions(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	actions, err := store.GetNextActions(c.Request().Context(), h.DB, m.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, actions)
+}
+
 func queryInt(c echo.Context, key string, def int) int {
 	v := c.QueryParam(key)
 	if v == "" {

@@ -38,8 +38,21 @@ type ScoredCompetitor struct {
 	TotalScans        int            `json:"total_scans"`
 	Score             float64        `json:"score"`
 	WhyPoints         []string       `json:"why_points"`
-	// Class: "brand" = direct competitor | "retailer" = multi-brand store (kept but labelled)
+	// Class: "brand" = direct competitor | "retailer" = multi-brand store
 	Class             string         `json:"class"`
+	// Tier: 1 = high-confidence established brand, 2 = mid-confidence, 3 = uncertain
+	Tier              int            `json:"tier"`
+}
+
+// competitorTier assigns a confidence tier based on score and cross-platform presence.
+func competitorTier(score float64, platformCount int) int {
+	if score >= 0.60 && platformCount >= 2 {
+		return 1 // Established, cited broadly
+	}
+	if score >= 0.30 || platformCount >= 2 {
+		return 2 // Real brand, limited signal
+	}
+	return 3 // Low confidence — may be noise
 }
 
 // competitorClass is used to classify competitor names for filtering and labelling.
@@ -353,6 +366,7 @@ func scoreAndFilterCompetitors(rows []rawCompetitorRow, weights map[string]float
 			Score:             score,
 			WhyPoints:         buildWhyPoints(r),
 			Class:             string(class),
+			Tier:              competitorTier(score, r.PlatformCount),
 		})
 	}
 

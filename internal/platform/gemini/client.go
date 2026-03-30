@@ -131,18 +131,11 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 429 {
-		// Parse the retryDelay from the response body and wait before returning
-		// so the caller's retry loop has a chance of succeeding.
+		// Return immediately — don't wait inside the client. The retry loop in
+		// runWithRetries already handles backoff, and waiting here would compound
+		// the delay (60s × 3 attempts = 3 min per query, killing the scan job).
 		body, _ := io.ReadAll(resp.Body)
 		delay := parseRetryDelay(string(body))
-		if delay > 0 && delay <= 60*time.Second {
-			slog.Debug("gemini: rate limited, waiting before retry", "delay", delay)
-			select {
-			case <-ctx.Done():
-				return platform.CitationResult{}, ctx.Err()
-			case <-time.After(delay):
-			}
-		}
 		return platform.CitationResult{}, fmt.Errorf("gemini: HTTP 429 (rate limited, retry after %s)", delay)
 	}
 

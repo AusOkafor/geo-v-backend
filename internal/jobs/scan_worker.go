@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,7 +24,7 @@ type ScanWorker struct {
 }
 
 func (w *ScanWorker) Timeout(_ *river.Job[ScanJobArgs]) time.Duration {
-	return 20 * time.Minute // real LLM calls can be slow; override River's default
+	return 35 * time.Minute // real LLM calls can be slow; Gemini 429 waits add latency
 }
 
 func NewScanWorker(db *pgxpool.Pool, clients []platform.AIClient, rc *river.Client[pgx.Tx]) *ScanWorker {
@@ -106,8 +107,19 @@ func (w *ScanWorker) Work(ctx context.Context, job *river.Job[ScanJobArgs]) erro
 	return nil
 }
 
+// isRateLimitErr returns true for HTTP 429 errors where retrying is pointless
+// (quota exhausted — waiting would just burn scan time with the same outcome).
+func isRateLimitErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "429") || strings.Contains(msg, "rate limited")
+}
+
 // runWithRetries calls client.Query up to n times with exponential backoff.
 // Returns all successful results (used for majority vote).
+// Rate-limit errors (429) abort immediately — retrying a quota error wastes time.
 func runWithRetries(ctx context.Context, client platform.AIClient, brand, prompt string, n int) ([]platform.CitationResult, error) {
 	var results []platform.CitationResult
 	backoff := time.Second
@@ -121,6 +133,11 @@ func runWithRetries(ctx context.Context, client platform.AIClient, brand, prompt
 		}
 		lastErr = err
 		slog.Debug("scan: attempt failed", "platform", client.Name(), "attempt", i+1, "err", err)
+		// Don't retry rate-limit errors — the quota window hasn't reset and
+		// waiting the backoff + another 429 delay burns 2-3 minutes per query.
+		if isRateLimitErr(err) {
+			break
+		}
 		if i < n-1 {
 			select {
 			case <-ctx.Done():

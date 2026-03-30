@@ -272,6 +272,42 @@ func (h *Handler) TriggerSync(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "queued"})
 }
 
+func (h *Handler) GetVisibilityPipeline(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	pipeline, err := store.GetVisibilityPipeline(c.Request().Context(), h.DB, m.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, pipeline)
+}
+
+func (h *Handler) GetQuickWins(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	wins, err := store.GetQuickWins(c.Request().Context(), h.DB, m.ID, m.BrandName, m.Category)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, wins)
+}
+
+func (h *Handler) GetScanProgress(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	progress, err := store.GetScanProgress(c.Request().Context(), h.DB, m.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, progress)
+}
+
 func (h *Handler) GetLiveAnswers(c echo.Context) error {
 	m, err := h.getAuthMerchant(c)
 	if err != nil {

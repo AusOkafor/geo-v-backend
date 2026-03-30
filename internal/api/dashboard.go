@@ -4,8 +4,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/riverqueue/river"
 	"github.com/austinokafor/geo-backend/internal/jobs"
 	"github.com/austinokafor/geo-backend/internal/store"
 )
@@ -59,8 +61,12 @@ func (h *Handler) GetVisibilityScores(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
+	ctx := c.Request().Context()
 	days := queryInt(c, "days", 30)
-	scores, err := store.GetVisibilityScores(c.Request().Context(), h.DB, m.ID, days)
+	// Always re-aggregate today's citation_records so scores are fresh even if the
+	// scan worker failed to call UpsertVisibilityScores before completing.
+	_ = store.UpsertVisibilityScores(ctx, h.DB, m.ID)
+	scores, err := store.GetVisibilityScores(ctx, h.DB, m.ID, days)
 	if err != nil {
 		return err
 	}
@@ -72,8 +78,11 @@ func (h *Handler) GetDailyScores(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
+	ctx := c.Request().Context()
 	days := queryInt(c, "days", 30)
-	scores, err := store.GetDailyScores(c.Request().Context(), h.DB, m.ID, days)
+	// Same on-demand aggregation as GetVisibilityScores.
+	_ = store.UpsertVisibilityScores(ctx, h.DB, m.ID)
+	scores, err := store.GetDailyScores(ctx, h.DB, m.ID, days)
 	if err != nil {
 		return err
 	}
@@ -228,12 +237,22 @@ func (h *Handler) TriggerScan(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
-	_, err = h.River.Insert(c.Request().Context(),
-		jobs.ScanJobArgs{MerchantID: m.ID, Priority: "high"}, nil)
+	ctx := c.Request().Context()
+	_, err = h.River.Insert(ctx, jobs.ScanJobArgs{MerchantID: m.ID, Priority: "high"}, nil)
 	if err != nil {
 		slog.Error("TriggerScan: failed to enqueue", "merchant_id", m.ID, "err", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to queue scan")
 	}
+
+	// Also schedule fix generation independently of the scan job's own flow.
+	// The scan worker enqueues fix generation too, but if it fails before completing,
+	// this guarantees fixes are generated. ScheduledAt is 3 minutes from now to give
+	// the scan time to finish first (35 queries × 3 platforms × ~2s each ≈ 3.5 min).
+	fixAt := river.InsertOpts{ScheduledAt: time.Now().Add(3 * time.Minute)}
+	if _, err := h.River.Insert(ctx, jobs.FixGenerationJobArgs{MerchantID: m.ID}, &fixAt); err != nil {
+		slog.Warn("TriggerScan: failed to enqueue fix generation fallback", "merchant_id", m.ID, "err", err)
+	}
+
 	slog.Info("TriggerScan: scan queued", "merchant_id", m.ID)
 	return c.JSON(http.StatusOK, map[string]string{"status": "queued"})
 }

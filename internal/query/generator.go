@@ -94,16 +94,19 @@ func Generate(category, brandName string) []Query {
 	}...)
 
 	// --- Brand-specific (8, only if brand name provided) ---
+	// Category is included in every query to disambiguate brands whose name
+	// collides with a well-known entity in another industry (e.g. "Basecamp & Co"
+	// jewelry vs. Basecamp project management software).
 	if brandName != "" {
 		queries = append(queries, []Query{
-			{Text: fmt.Sprintf("%s reviews", brandName), QueryType: TypeBrand},
-			{Text: fmt.Sprintf("Is %s worth it", brandName), QueryType: TypeBrand},
-			{Text: fmt.Sprintf("%s vs competitors", brandName), QueryType: TypeBrand},
-			{Text: fmt.Sprintf("%s quality", brandName), QueryType: TypeBrand},
-			{Text: fmt.Sprintf("Should I buy from %s", brandName), QueryType: TypeBrand},
-			{Text: fmt.Sprintf("Is %s a good brand", brandName), QueryType: TypeBrand},
-			{Text: fmt.Sprintf("%s pros and cons", brandName), QueryType: TypeBrand},
-			{Text: fmt.Sprintf("What do people say about %s", brandName), QueryType: TypeBrand},
+			{Text: fmt.Sprintf("%s %s reviews", brandName, category), QueryType: TypeBrand},
+			{Text: fmt.Sprintf("Is %s a good %s brand", brandName, category), QueryType: TypeBrand},
+			{Text: fmt.Sprintf("%s vs other %s brands", brandName, category), QueryType: TypeBrand},
+			{Text: fmt.Sprintf("%s %s quality", brandName, category), QueryType: TypeBrand},
+			{Text: fmt.Sprintf("Should I buy %s from %s", category, brandName), QueryType: TypeBrand},
+			{Text: fmt.Sprintf("Is %s the best %s brand", brandName, category), QueryType: TypeBrand},
+			{Text: fmt.Sprintf("%s %s pros and cons", brandName, category), QueryType: TypeBrand},
+			{Text: fmt.Sprintf("What do people say about %s %s", brandName, category), QueryType: TypeBrand},
 		}...)
 	}
 

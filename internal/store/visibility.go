@@ -487,70 +487,79 @@ type AIReadinessScore struct {
 	TopAction  string               `json:"top_action"` // Single highest-leverage next step
 }
 
-// GetAIReadinessScore computes a 5-dimension AI readiness score from existing data.
-// No new data is collected — it synthesises signals already in the DB.
+// GetAIReadinessScore computes a 3-bucket AI readiness score from existing data.
+// Buckets map directly to the 3 reasons a brand is invisible to AI:
+//   1. Not Found   — AI can't discover you (query coverage, content gaps)
+//   2. Not Understood — AI can't parse you (schema, FAQ, brand entity clarity)
+//   3. Not Trusted — AI doesn't have third-party evidence you exist (mentions, authority)
 func GetAIReadinessScore(ctx context.Context, db *pgxpool.Pool, merchantID int64) (AIReadinessScore, error) {
 	var result AIReadinessScore
 
-	// 1. Brand Entity Recognition — from grounded citation rate
-	recognition, err := GetBrandRecognitionStatus(ctx, db, merchantID)
-	entityScore := 0
-	if err == nil && recognition.TotalQueries > 0 {
-		entityScore = int(recognition.RecognitionRate * 10)
-	}
-
-	// 2. Query Coverage — highest platform visibility score / 10
-	coverageScore := 0
-	var maxScore int
-	err2 := db.QueryRow(ctx, `
-		SELECT COALESCE(MAX(score), 0)
-		FROM visibility_scores
+	// ── Bucket 1: Not Found ───────────────────────────────────────────────────
+	// Signal: how many queries the brand appeared in vs total queries run
+	var queriesHit, queriesTotal int
+	_ = db.QueryRow(ctx, `
+		SELECT
+			COUNT(CASE WHEN mentioned = true THEN 1 END)::int,
+			COUNT(*)::int
+		FROM citation_records
 		WHERE merchant_id = $1
-		  AND score_date >= CURRENT_DATE - interval '30 days'
-	`, merchantID).Scan(&maxScore)
-	if err2 == nil {
-		coverageScore = maxScore / 10
-		if coverageScore > 10 {
-			coverageScore = 10
+		  AND scanned_at >= CURRENT_DATE - interval '30 days'
+	`, merchantID).Scan(&queriesHit, &queriesTotal)
+
+	notFoundScore := 0
+	notFoundDetail := "No scan data yet — run a scan to measure discovery"
+	if queriesTotal > 0 {
+		pct := (queriesHit * 100) / queriesTotal
+		notFoundScore = min(10, pct/10)
+		notFoundDetail = fmt.Sprintf("Found in %d of %d queries scanned across all platforms", queriesHit, queriesTotal)
+		if queriesHit == 0 {
+			notFoundDetail = fmt.Sprintf("Not found in any of %d scanned queries — AI has nothing to retrieve for your brand", queriesTotal)
 		}
 	}
 
-	// 3. Structured Data (schema fixes) — applied=10, pending=2, none=0
-	schemaScore := 0
-	var schemaApplied, schemaPending int
+	// ── Bucket 2: Not Understood ──────────────────────────────────────────────
+	// Signal: schema + FAQ coverage (structured signals AI can parse)
+	var schemaApplied, schemaPending, faqApplied, faqPending int
 	_ = db.QueryRow(ctx, `
 		SELECT
-			SUM(CASE WHEN status = 'applied' THEN 1 ELSE 0 END)::int,
-			SUM(CASE WHEN status = 'pending' OR status = 'approved' THEN 1 ELSE 0 END)::int
+			SUM(CASE WHEN fix_type = 'schema' AND status IN ('applied','manual') THEN 1 ELSE 0 END)::int,
+			SUM(CASE WHEN fix_type = 'schema' AND status IN ('pending','approved') THEN 1 ELSE 0 END)::int,
+			SUM(CASE WHEN fix_type = 'faq' AND status IN ('applied','manual') THEN 1 ELSE 0 END)::int,
+			SUM(CASE WHEN fix_type = 'faq' AND status IN ('pending','approved') THEN 1 ELSE 0 END)::int
 		FROM pending_fixes
-		WHERE merchant_id = $1 AND fix_type = 'schema'
-	`, merchantID).Scan(&schemaApplied, &schemaPending)
+		WHERE merchant_id = $1
+	`, merchantID).Scan(&schemaApplied, &schemaPending, &faqApplied, &faqPending)
+
+	notUnderstoodScore := 0
+	schemaPoints, faqPoints := 0, 0
+	if schemaApplied > 0 {
+		schemaPoints = 5
+	} else if schemaPending > 0 {
+		schemaPoints = 2
+	}
+	if faqApplied > 0 {
+		faqPoints = 5
+	} else if faqPending > 0 {
+		faqPoints = 2
+	}
+	notUnderstoodScore = schemaPoints + faqPoints
+
+	notUnderstoodDetail := "No schema or FAQ — AI cannot parse your catalog or match buyer questions"
 	switch {
+	case schemaApplied > 0 && faqApplied > 0:
+		notUnderstoodDetail = "Schema and FAQ applied — AI can parse your products and match buyer queries"
 	case schemaApplied > 0:
-		schemaScore = 10
-	case schemaPending > 0:
-		schemaScore = 2
-	}
-
-	// 4. FAQ Coverage — applied=10, pending=2, none=0
-	faqScore := 0
-	var faqApplied, faqPending int
-	_ = db.QueryRow(ctx, `
-		SELECT
-			SUM(CASE WHEN status = 'applied' OR status = 'manual' THEN 1 ELSE 0 END)::int,
-			SUM(CASE WHEN status = 'pending' OR status = 'approved' THEN 1 ELSE 0 END)::int
-		FROM pending_fixes
-		WHERE merchant_id = $1 AND fix_type = 'faq'
-	`, merchantID).Scan(&faqApplied, &faqPending)
-	switch {
+		notUnderstoodDetail = "Schema applied — FAQ still missing. Add buyer-intent Q&A to match how AI answers shopping questions"
 	case faqApplied > 0:
-		faqScore = 10
-	case faqPending > 0:
-		faqScore = 2
+		notUnderstoodDetail = "FAQ applied — schema still missing. Add JSON-LD so AI can extract price, material, and category"
+	case schemaPending > 0 || faqPending > 0:
+		notUnderstoodDetail = "Structure fixes generated but not yet applied — apply them to become AI-readable"
 	}
 
-	// 5. Platform Breadth — how many platforms cite the brand at all (0, 1, 2 or 3)
-	breadthScore := 0
+	// ── Bucket 3: Not Trusted ─────────────────────────────────────────────────
+	// Signal: how many platforms cite the brand (cross-platform = external trust signal)
+	// and brand recognition rate on grounded (web-search) platforms
 	var platformsWithMentions int
 	_ = db.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT platform)::int
@@ -559,111 +568,110 @@ func GetAIReadinessScore(ctx context.Context, db *pgxpool.Pool, merchantID int64
 		  AND mentioned = true
 		  AND scanned_at >= CURRENT_DATE - interval '30 days'
 	`, merchantID).Scan(&platformsWithMentions)
-	breadthScore = (platformsWithMentions * 10) / 3
+
+	recognition, _ := GetBrandRecognitionStatus(ctx, db, merchantID)
+	recognitionBonus := 0
+	if recognition.TotalQueries > 0 {
+		recognitionBonus = int(recognition.RecognitionRate * 3) // max +3 bonus
+	}
+
+	notTrustedScore := min(10, (platformsWithMentions*3)+recognitionBonus)
+	notTrustedDetail := "No external citation signals — AI has no third-party evidence your brand exists"
+	if platformsWithMentions == 3 {
+		notTrustedDetail = "Cited across all 3 AI platforms — strong authority signal"
+	} else if platformsWithMentions > 0 {
+		notTrustedDetail = fmt.Sprintf("Cited on %d of 3 platforms — earn press mentions and directory listings to build cross-platform trust", platformsWithMentions)
+	}
 
 	dims := []ReadinessDimension{
 		{
-			Name:   "Brand Entity Recognition",
-			Score:  entityScore,
-			Label:  readinessLabel(entityScore),
-			Detail: entityDetail(entityScore, recognition.MentionedQueries, recognition.TotalQueries),
+			Name:   "Not Found",
+			Score:  notFoundScore,
+			Label:  notFoundLabel(notFoundScore),
+			Detail: notFoundDetail,
 		},
 		{
-			Name:   "Query Coverage",
-			Score:  coverageScore,
-			Label:  readinessLabel(coverageScore),
-			Detail: fmt.Sprintf("Highest visibility score across platforms: %d%%", maxScore),
+			Name:   "Not Understood",
+			Score:  notUnderstoodScore,
+			Label:  notUnderstoodLabel(notUnderstoodScore),
+			Detail: notUnderstoodDetail,
 		},
 		{
-			Name:   "Structured Data",
-			Score:  schemaScore,
-			Label:  readinessLabel(schemaScore),
-			Detail: structuredDataDetail(schemaApplied, schemaPending),
-		},
-		{
-			Name:   "FAQ Coverage",
-			Score:  faqScore,
-			Label:  readinessLabel(faqScore),
-			Detail: faqDetail(faqApplied, faqPending),
-		},
-		{
-			Name:   "Platform Breadth",
-			Score:  breadthScore,
-			Label:  readinessLabel(breadthScore),
-			Detail: fmt.Sprintf("Cited on %d of 3 AI platforms", platformsWithMentions),
+			Name:   "Not Trusted",
+			Score:  notTrustedScore,
+			Label:  notTrustedLabel(notTrustedScore),
+			Detail: notTrustedDetail,
 		},
 	}
 
-	total := entityScore + coverageScore + schemaScore + faqScore + breadthScore
-	result.Overall = (total * 100) / 50 // 5 dims × 10 max = 50 → scale to 100
+	total := notFoundScore + notUnderstoodScore + notTrustedScore
+	result.Overall = (total * 100) / 30 // 3 dims × 10 max = 30 → scale to 100
 	if result.Overall > 100 {
 		result.Overall = 100
 	}
 	result.Dimensions = dims
-	result.TopAction = readinessTopAction(entityScore, schemaScore, faqScore, coverageScore)
+	result.TopAction = readinessTopAction(notFoundScore, notUnderstoodScore, notTrustedScore)
 	return result, nil
 }
 
-func readinessLabel(score int) string {
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func notFoundLabel(score int) string {
 	switch {
 	case score >= 8:
-		return "Strong"
-	case score >= 5:
-		return "Building"
-	case score >= 2:
-		return "Weak"
+		return "Discoverable"
+	case score >= 4:
+		return "Partially found"
+	case score >= 1:
+		return "Barely visible"
 	default:
-		return "Not started"
+		return "Not found"
 	}
 }
 
-func entityDetail(score, mentioned, total int) string {
-	if total == 0 {
-		return "No scan data yet — run a scan to measure brand recognition"
-	}
-	if score == 0 {
-		return fmt.Sprintf("Not found in any of %d AI queries — brand has no AI footprint", total)
-	}
-	return fmt.Sprintf("Found in %d of %d AI queries across grounded platforms", mentioned, total)
-}
-
-func structuredDataDetail(applied, pending int) string {
+func notUnderstoodLabel(score int) string {
 	switch {
-	case applied > 0:
-		return fmt.Sprintf("%d schema fix(es) applied — AI can parse your product data", applied)
-	case pending > 0:
-		return "Schema fix generated — apply it to become AI-readable"
+	case score >= 8:
+		return "Well structured"
+	case score >= 4:
+		return "Partially structured"
+	case score >= 1:
+		return "Weak structure"
 	default:
-		return "No product schema detected — AI cannot parse your catalog structure"
+		return "No structure"
 	}
 }
 
-func faqDetail(applied, pending int) string {
+func notTrustedLabel(score int) string {
 	switch {
-	case applied > 0:
-		return fmt.Sprintf("%d AI-optimized FAQ(s) applied — matching buyer intent queries", applied)
-	case pending > 0:
-		return "FAQ fix generated — publish it to match how buyers ask AI assistants"
+	case score >= 8:
+		return "Trusted"
+	case score >= 4:
+		return "Building trust"
+	case score >= 1:
+		return "Weak signals"
 	default:
-		return "No buyer-intent FAQ detected — AI misses questions your customers ask"
+		return "Not trusted"
 	}
 }
 
-func readinessTopAction(entityScore, schemaScore, faqScore, coverageScore int) string {
-	// Suggest the lowest-scored, highest-leverage improvement
-	if entityScore == 0 {
-		return "Get your brand mentioned in at least one trusted online source (press, review, directory)"
+func readinessTopAction(notFoundScore, notUnderstoodScore, notTrustedScore int) string {
+	// Fix in order: structure first, then discovery, then trust
+	if notUnderstoodScore < 4 {
+		return "Apply the schema and FAQ fixes — AI cannot understand your brand without them"
 	}
-	if schemaScore < 2 {
-		return "Add JSON-LD product schema so AI assistants can parse your catalog"
+	if notFoundScore < 4 {
+		return "Create content targeting your top query gaps — AI can't find you for the queries buyers actually ask"
 	}
-	if faqScore < 2 {
-		return "Publish an AI-optimized FAQ that matches how buyers ask ChatGPT and Perplexity"
+	if notTrustedScore < 4 {
+		return "Get your brand mentioned in at least one trusted external source — press, directory, or editorial"
 	}
-	if coverageScore < 3 {
-		return "Target your top visibility gap queries with dedicated content pages"
-	}
-	return "Strengthen brand signals: earn backlinks from jewelry blogs and press mentions"
+	return "You're building momentum — keep publishing content and earning external citations"
 }
 
 // ─── Next 3 Actions ──────────────────────────────────────────────────────────
@@ -678,32 +686,68 @@ type NextAction struct {
 }
 
 // GetNextActions returns up to 3 prioritized actions derived from existing scan + fix data.
-// The logic is: highest-impact pending fix → top content gap → structural gap.
+// Sequence: structure (schema/faq) → content (specific gap queries) → authority (external).
+// Structure must come first — there is no point creating content if AI cannot parse it.
 func GetNextActions(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]NextAction, error) {
 	var actions []NextAction
 
-	// Action 1: highest-impact pending fix
-	var fixTitle, fixType, fixPriority string
-	var fixImpact int
-	err := db.QueryRow(ctx, `
-		SELECT title, fix_type, priority, est_impact
-		FROM pending_fixes
-		WHERE merchant_id = $1
-		  AND status = 'pending'
-		ORDER BY est_impact DESC, created_at ASC
-		LIMIT 1
-	`, merchantID).Scan(&fixTitle, &fixType, &fixPriority, &fixImpact)
-	if err == nil {
+	// Check structural gaps first — these block everything else
+	var schemaCount, faqCount int
+	_ = db.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM pending_fixes
+		WHERE merchant_id = $1 AND fix_type = 'schema' AND status IN ('applied','manual','pending','approved')
+	`, merchantID).Scan(&schemaCount)
+	_ = db.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM pending_fixes
+		WHERE merchant_id = $1 AND fix_type = 'faq' AND status IN ('applied','manual','pending','approved')
+	`, merchantID).Scan(&faqCount)
+
+	missingSchema := schemaCount == 0
+	missingFAQ := faqCount == 0
+
+	// Action 1 — structural blocker: schema if missing, otherwise FAQ
+	if missingSchema {
 		actions = append(actions, NextAction{
 			Priority: 1,
-			Type:     "fix",
-			Title:    fixTitle,
-			Why:      fmt.Sprintf("This %s fix is estimated to increase visibility by %d points", fixType, fixImpact),
-			Impact:   fmt.Sprintf("+%d pts estimated", fixImpact),
+			Type:     "structure",
+			Title:    "Add JSON-LD product schema to your store",
+			Why:      "AI assistants cannot parse your catalog without structured data — this is the foundation everything else builds on",
+			Impact:   "+8 pts estimated",
 		})
+	} else if missingFAQ {
+		actions = append(actions, NextAction{
+			Priority: 1,
+			Type:     "structure",
+			Title:    "Publish an AI-optimized FAQ page",
+			Why:      "Buyer-intent Q&A directly matches how ChatGPT and Perplexity answer shopping queries — highest single-fix impact",
+			Impact:   "+18 pts estimated",
+		})
+	} else {
+		// Both structure fixes exist — show the highest pending fix as action 1
+		var fixTitle, fixType string
+		var fixImpact int
+		err := db.QueryRow(ctx, `
+			SELECT title, fix_type, est_impact
+			FROM pending_fixes
+			WHERE merchant_id = $1
+			  AND status = 'pending'
+			  AND fix_layer = 'structure'
+			ORDER BY est_impact DESC, created_at ASC
+			LIMIT 1
+		`, merchantID).Scan(&fixTitle, &fixType, &fixImpact)
+		if err == nil {
+			actions = append(actions, NextAction{
+				Priority: 1,
+				Type:     "fix",
+				Title:    fixTitle,
+				Why:      fmt.Sprintf("Applying this %s fix removes a structural gap AI is penalising you for", fixType),
+				Impact:   fmt.Sprintf("+%d pts estimated", fixImpact),
+			})
+		}
 	}
 
-	// Action 2: highest-opportunity query gap (most competitors cited = most opportunity)
+	// Action 2 — highest-opportunity content gap from actual scan data
+	// Query where the most competitors appeared but this merchant didn't = most winnable
 	var gapQuery string
 	var competitorCount int
 	err2 := db.QueryRow(ctx, `
@@ -725,7 +769,7 @@ func GetNextActions(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 		)
 		SELECT query, competitor_count
 		FROM per_query
-		WHERE NOT any_mentioned AND competitor_count >= 3
+		WHERE NOT any_mentioned AND competitor_count >= 2
 		ORDER BY competitor_count DESC
 		LIMIT 1
 	`, merchantID).Scan(&gapQuery, &competitorCount)
@@ -733,52 +777,60 @@ func GetNextActions(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 		actions = append(actions, NextAction{
 			Priority: 2,
 			Type:     "content",
-			Title:    fmt.Sprintf("Create content targeting: \"%s\"", gapQuery),
-			Why:      fmt.Sprintf("AI already names %d competitors here — it knows the topic. You just need to be in the answer.", competitorCount),
-			Impact:   "High opportunity — AI-ready query",
+			Title:    fmt.Sprintf("Create content for: \"%s\"", gapQuery),
+			Why:      fmt.Sprintf("AI named %d competitors for this exact query — it knows the topic. Add a page or FAQ answer targeting this query so you appear too.", competitorCount),
+			Impact:   "High — AI-ready query with existing competition",
 		})
+	} else {
+		// No gap data yet — show highest content fix
+		var fixTitle, fixType string
+		var fixImpact int
+		err := db.QueryRow(ctx, `
+			SELECT title, fix_type, est_impact
+			FROM pending_fixes
+			WHERE merchant_id = $1
+			  AND status = 'pending'
+			  AND fix_layer = 'content'
+			ORDER BY est_impact DESC, created_at ASC
+			LIMIT 1
+		`, merchantID).Scan(&fixTitle, &fixType, &fixImpact)
+		if err == nil {
+			actions = append(actions, NextAction{
+				Priority: 2,
+				Type:     "fix",
+				Title:    fixTitle,
+				Why:      fmt.Sprintf("This %s improvement targets the queries AI is using to compare brands in your category", fixType),
+				Impact:   fmt.Sprintf("+%d pts estimated", fixImpact),
+			})
+		}
 	}
 
-	// Action 3: structural gap — missing schema OR missing FAQ
-	var missingSchema, missingFAQ bool
-	var schemaCount int
+	// Action 3 — authority layer: external mentions are non-negotiable for long-term visibility
+	// Check if brand has any external citation signal
+	var mentionedPlatforms int
 	_ = db.QueryRow(ctx, `
-		SELECT COUNT(*)::int FROM pending_fixes
-		WHERE merchant_id = $1 AND fix_type = 'schema' AND status IN ('applied','manual','pending','approved')
-	`, merchantID).Scan(&schemaCount)
-	missingSchema = schemaCount == 0
+		SELECT COUNT(DISTINCT platform)::int
+		FROM citation_records
+		WHERE merchant_id = $1
+		  AND mentioned = true
+		  AND scanned_at >= CURRENT_DATE - interval '30 days'
+	`, merchantID).Scan(&mentionedPlatforms)
 
-	var faqCount int
-	_ = db.QueryRow(ctx, `
-		SELECT COUNT(*)::int FROM pending_fixes
-		WHERE merchant_id = $1 AND fix_type = 'faq' AND status IN ('applied','manual','pending','approved')
-	`, merchantID).Scan(&faqCount)
-	missingFAQ = faqCount == 0
-
-	switch {
-	case missingSchema:
+	if mentionedPlatforms == 0 {
 		actions = append(actions, NextAction{
 			Priority: 3,
-			Type:     "structure",
-			Title:    "Add JSON-LD product schema to your store",
-			Why:      "Structured data lets AI assistants parse your catalog — without it you are invisible to schema-aware recommendations",
-			Impact:   "+8 pts estimated",
+			Type:     "authority",
+			Title:    "Get your brand mentioned in one trusted external source",
+			Why:      "AI has no third-party evidence your brand exists. One press mention, directory listing, or editorial citation changes this — and it compounds over time.",
+			Impact:   "Foundational — no external mentions = no AI trust",
 		})
-	case missingFAQ:
+	} else {
 		actions = append(actions, NextAction{
 			Priority: 3,
-			Type:     "structure",
-			Title:    "Publish an AI-optimized FAQ page",
-			Why:      "Buyer-intent Q&A matches exactly how ChatGPT and Perplexity answer shopping questions",
-			Impact:   "+18 pts estimated",
-		})
-	default:
-		actions = append(actions, NextAction{
-			Priority: 3,
-			Type:     "structure",
-			Title:    "Earn 3 backlinks from jewelry-focused publications",
-			Why:      "External citations are the strongest signal AI uses to decide which brands to recommend",
-			Impact:   "Non-negotiable for long-term AI visibility",
+			Type:     "authority",
+			Title:    "Earn backlinks from category-specific publications",
+			Why:      fmt.Sprintf("You appear on %d of 3 platforms. Brands cited in editorial content get picked up by the platforms where you're still invisible.", mentionedPlatforms),
+			Impact:   "Compounds over time — each mention widens platform reach",
 		})
 	}
 

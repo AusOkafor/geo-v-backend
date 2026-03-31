@@ -50,6 +50,9 @@ type GenerateInput struct {
 	Tags               []string
 	Competitors        []string
 	FixType            FixType
+	// QueryGaps are the specific queries the merchant is missing from in AI results.
+	// Injected so generated content directly targets real missed buyer intent.
+	QueryGaps []string
 }
 
 // GenerateResult is the parsed output from Claude.
@@ -143,34 +146,53 @@ func (g *Generator) Generate(ctx context.Context, in GenerateInput) (*GenerateRe
 }
 
 func buildPrompt(in GenerateInput) string {
+	gapSection := ""
+	if len(in.QueryGaps) > 0 {
+		gapSection = fmt.Sprintf("\n\nQueries AI was asked where this brand did NOT appear (target these specifically):\n")
+		for i, q := range in.QueryGaps {
+			if i >= 10 {
+				break
+			}
+			gapSection += fmt.Sprintf("- %s\n", q)
+		}
+	}
+
 	switch in.FixType {
 	case FixDescription:
 		return fmt.Sprintf(`Generate an optimized product description for brand "%s" (category: %s).
 
 Current description: %s
 Tags: %v
-Top competitors AI cites instead: %v
+Top competitors AI cites instead: %v%s
 
-Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility", "generated": {"description": "800-1000 word HTML description with brand name 3-4x, semantic headings, embedded FAQ, material/dimension specifics"}}`,
-			in.BrandName, in.Category, in.CurrentDescription, in.Tags, in.Competitors)
+The description MUST naturally answer the missed queries above so AI can match this product to those buyer intents.
+
+Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility (mention the specific queries it targets)", "generated": {"description": "800-1000 word HTML description with brand name 3-4x, semantic headings, embedded FAQ, material/dimension specifics"}}`,
+			in.BrandName, in.Category, in.CurrentDescription, in.Tags, in.Competitors, gapSection)
 
 	case FixFAQ:
-		return fmt.Sprintf(`Generate 10 buyer-intent FAQ Q&A pairs for brand "%s" (category: %s) that match how buyers ask ChatGPT, Perplexity, and Gemini for recommendations.
+		return fmt.Sprintf(`Generate 10 buyer-intent FAQ Q&A pairs for brand "%s" (category: %s) that match how buyers ask ChatGPT, Perplexity, and Gemini for recommendations.%s
 
-Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility", "generated": {"faqs": [{"question": "...", "answer": "..."}]}}`,
-			in.BrandName, in.Category)
+Each FAQ question MUST directly match one of the missed queries above (rephrase as a question if needed). Answers should mention the brand name and be 2-4 sentences — rich enough for AI to cite.
+
+Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility (mention the specific queries it covers)", "generated": {"faqs": [{"question": "...", "answer": "..."}]}}`,
+			in.BrandName, in.Category, gapSection)
 
 	case FixSchema:
-		return fmt.Sprintf(`Generate JSON-LD Product schema markup for brand "%s" (category: %s).
+		return fmt.Sprintf(`Generate JSON-LD Product schema markup for brand "%s" (category: %s).%s
+
+Include: @type Product, name, brand, description (incorporating the missed queries above), offers with price range, aggregateRating placeholder.
 
 Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility", "generated": {"schema": "JSON-LD string"}}`,
-			in.BrandName, in.Category)
+			in.BrandName, in.Category, gapSection)
 
 	case FixListing:
-		return fmt.Sprintf(`Generate directory listing content for brand "%s" (category: %s) suitable for submission to Wirecutter, GQ, and niche directories.
+		return fmt.Sprintf(`Generate directory listing content for brand "%s" (category: %s) suitable for submission to niche directories and editorial sites.%s
+
+The listing copy should answer the missed queries above so that when directories index this content, AI can find it.
 
 Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility", "generated": {"listing": "..."}}`,
-			in.BrandName, in.Category)
+			in.BrandName, in.Category, gapSection)
 	}
 
 	return fmt.Sprintf(`Improve AI visibility for brand "%s". Return JSON with title, explanation, and generated fields.`, in.BrandName)

@@ -56,6 +56,15 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		products = nil // non-fatal — fixes without a GID are still useful
 	}
 
+	// Load top query gaps from this merchant's actual scan data.
+	// These are the queries AI was asked where the merchant did NOT appear
+	// but competitors did — the most concrete signal of what content is missing.
+	queryGaps, _ := store.GetQueryGaps(ctx, w.db, merchant.ID)
+	missedQueries := make([]string, 0, len(queryGaps))
+	for _, g := range queryGaps {
+		missedQueries = append(missedQueries, g.Query)
+	}
+
 	// If no visibility scores exist yet (first scan, aggregation may not have run),
 	// treat all platforms as score=0 so fixes are still generated.
 	if len(scores) == 0 {
@@ -66,75 +75,118 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		}
 	}
 
-	// Find platforms with score < 80 and no pending fix of that type
-	existingFixes, _ := store.GetFixes(ctx, w.db, merchant.ID, "pending")
+	// Check which fix types already exist (any status except rejected)
+	existingFixes, _ := store.GetFixes(ctx, w.db, merchant.ID, "")
 	existingTypes := map[fix.FixType]bool{}
 	existingTargets := map[string]bool{} // GIDs already targeted by a pending description fix
 	for _, f := range existingFixes {
+		if f.Status == "rejected" {
+			continue
+		}
 		existingTypes[fix.FixType(f.FixType)] = true
 		if fix.FixType(f.FixType) == fix.FixDescription && f.TargetGID != "" {
 			existingTargets[f.TargetGID] = true
 		}
 	}
 
-	for _, score := range scores {
-		if score.Score >= 80 {
-			continue
+	// Determine if any platform is below threshold
+	anyLowScore := false
+	for _, s := range scores {
+		if s.Score < 80 {
+			anyLowScore = true
+			break
 		}
+	}
+	if !anyLowScore {
+		return nil
+	}
 
-		// Generate one fix per gap type (avoid duplicates)
-		for _, fixType := range []fix.FixType{fix.FixDescription, fix.FixFAQ, fix.FixSchema} {
-			if fixType != fix.FixDescription && existingTypes[fixType] {
-				continue
-			}
-
-			// For description fixes, pick a product that isn't already targeted
-			targetGID := ""
-			currentDesc := ""
-			var tags []string
-			if fixType == fix.FixDescription {
-				var picked *store.Product
-				for i := range products {
-					if !existingTargets[products[i].ShopifyGID] {
-						picked = &products[i]
-						break
-					}
-				}
-				if picked == nil {
-					continue // all products already have a pending description fix
-				}
-				targetGID = picked.ShopifyGID
-				currentDesc = picked.Description
-				tags = picked.Tags
-				existingTargets[targetGID] = true
-			}
-
-			result, err := w.generator.Generate(ctx, fix.GenerateInput{
-				BrandName:          merchant.BrandName,
-				Category:           merchant.Category,
-				Competitors:        competitorNames,
-				FixType:            fixType,
-				CurrentDescription: currentDesc,
-				Tags:               tags,
-			})
-			if err != nil {
-				continue // skip failed generation
-			}
-
-			_, err = store.InsertFix(ctx, w.db, store.Fix{
+	// Fix generation order: structure first (schema → faq), then content (description).
+	// Structure fixes are the foundation — without them, content fixes have less impact.
+	// Layer 1: Schema — lets AI parse the catalog structure
+	if !existingTypes[fix.FixSchema] {
+		result, err := w.generator.Generate(ctx, fix.GenerateInput{
+			BrandName:  merchant.BrandName,
+			Category:   merchant.Category,
+			Competitors: competitorNames,
+			FixType:    fix.FixSchema,
+			QueryGaps:  missedQueries,
+		})
+		if err == nil {
+			_, _ = store.InsertFix(ctx, w.db, store.Fix{
 				MerchantID:  merchant.ID,
-				TargetGID:   targetGID,
-				FixType:     string(fixType),
-				Priority:    priorityForType(fixType),
+				FixType:     string(fix.FixSchema),
+				FixLayer:    "structure",
+				Priority:    "medium",
 				Title:       result.Title,
 				Explanation: result.Explanation,
 				Generated:   result.Generated,
-				EstImpact:   fix.EstImpact(fixType),
+				EstImpact:   fix.EstImpact(fix.FixSchema),
+			})
+			existingTypes[fix.FixSchema] = true
+		}
+	}
+
+	// Layer 1: FAQ — matches the exact queries AI is asked
+	if !existingTypes[fix.FixFAQ] {
+		result, err := w.generator.Generate(ctx, fix.GenerateInput{
+			BrandName:  merchant.BrandName,
+			Category:   merchant.Category,
+			Competitors: competitorNames,
+			FixType:    fix.FixFAQ,
+			QueryGaps:  missedQueries,
+		})
+		if err == nil {
+			_, err = store.InsertFix(ctx, w.db, store.Fix{
+				MerchantID:  merchant.ID,
+				FixType:     string(fix.FixFAQ),
+				FixLayer:    "structure",
+				Priority:    "high",
+				Title:       result.Title,
+				Explanation: result.Explanation,
+				Generated:   result.Generated,
+				EstImpact:   fix.EstImpact(fix.FixFAQ),
 			})
 			if err != nil {
-				return fmt.Errorf("fix gen: insert fix: %w", err)
+				return fmt.Errorf("fix gen: insert faq fix: %w", err)
 			}
-			existingTypes[fixType] = true
+			existingTypes[fix.FixFAQ] = true
+		}
+	}
+
+	// Layer 2: Description — content targeting specific missed queries
+	var picked *store.Product
+	for i := range products {
+		if !existingTargets[products[i].ShopifyGID] {
+			picked = &products[i]
+			break
+		}
+	}
+	if picked != nil && !existingTypes[fix.FixDescription] {
+		result, err := w.generator.Generate(ctx, fix.GenerateInput{
+			BrandName:          merchant.BrandName,
+			Category:           merchant.Category,
+			Competitors:        competitorNames,
+			FixType:            fix.FixDescription,
+			CurrentDescription: picked.Description,
+			Tags:               picked.Tags,
+			QueryGaps:          missedQueries,
+		})
+		if err == nil {
+			_, err = store.InsertFix(ctx, w.db, store.Fix{
+				MerchantID:  merchant.ID,
+				TargetGID:   picked.ShopifyGID,
+				FixType:     string(fix.FixDescription),
+				FixLayer:    "content",
+				Priority:    "high",
+				Title:       result.Title,
+				Explanation: result.Explanation,
+				Generated:   result.Generated,
+				EstImpact:   fix.EstImpact(fix.FixDescription),
+			})
+			if err != nil {
+				return fmt.Errorf("fix gen: insert description fix: %w", err)
+			}
 		}
 	}
 

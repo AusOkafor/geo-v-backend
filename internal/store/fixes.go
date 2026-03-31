@@ -11,26 +11,27 @@ import (
 
 // Fix mirrors the pending_fixes table.
 type Fix struct {
-	ID          int64      `json:"id"`
-	MerchantID  int64      `json:"merchant_id"`
-	TargetGID   string     `json:"target_gid"`
-	FixType     string     `json:"fix_type"`
-	Priority    string     `json:"priority"`
-	Title       string     `json:"title"`
-	Explanation string     `json:"explanation"`
+	ID          int64           `json:"id"`
+	MerchantID  int64           `json:"merchant_id"`
+	TargetGID   string          `json:"target_gid"`
+	FixType     string          `json:"fix_type"`
+	FixLayer    string          `json:"fix_layer"` // "structure" | "content" | "authority"
+	Priority    string          `json:"priority"`
+	Title       string          `json:"title"`
+	Explanation string          `json:"explanation"`
 	Original    json.RawMessage `json:"original"`
 	Generated   json.RawMessage `json:"generated"`
-	EstImpact   int        `json:"est_impact"`
-	Status      string     `json:"status"`
-	AppliedAt   *time.Time `json:"applied_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	EstImpact   int             `json:"est_impact"`
+	Status      string          `json:"status"`
+	AppliedAt   *time.Time      `json:"applied_at"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 // GetFixes returns fixes for a merchant, optionally filtered by status.
 func GetFixes(ctx context.Context, db *pgxpool.Pool, merchantID int64, status string) ([]Fix, error) {
 	query := `
-		SELECT id, merchant_id, target_gid, fix_type, priority, title, explanation,
+		SELECT id, merchant_id, target_gid, fix_type, fix_layer, priority, title, explanation,
 		       original, generated, est_impact, status, applied_at, created_at, updated_at
 		FROM pending_fixes
 		WHERE merchant_id = $1`
@@ -40,7 +41,11 @@ func GetFixes(ctx context.Context, db *pgxpool.Pool, merchantID int64, status st
 		query += " AND status = $2"
 		args = append(args, status)
 	}
-	query += " ORDER BY est_impact DESC, created_at DESC"
+	// Order by layer sequence first: structure → content → authority, then impact
+	query += `
+		ORDER BY
+			CASE fix_layer WHEN 'structure' THEN 1 WHEN 'content' THEN 2 ELSE 3 END,
+			est_impact DESC, created_at DESC`
 
 	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
@@ -52,7 +57,7 @@ func GetFixes(ctx context.Context, db *pgxpool.Pool, merchantID int64, status st
 	for rows.Next() {
 		var f Fix
 		if err := rows.Scan(
-			&f.ID, &f.MerchantID, &f.TargetGID, &f.FixType, &f.Priority,
+			&f.ID, &f.MerchantID, &f.TargetGID, &f.FixType, &f.FixLayer, &f.Priority,
 			&f.Title, &f.Explanation, &f.Original, &f.Generated,
 			&f.EstImpact, &f.Status, &f.AppliedAt, &f.CreatedAt, &f.UpdatedAt,
 		); err != nil {
@@ -67,11 +72,11 @@ func GetFixes(ctx context.Context, db *pgxpool.Pool, merchantID int64, status st
 func GetFix(ctx context.Context, db *pgxpool.Pool, merchantID, fixID int64) (*Fix, error) {
 	var f Fix
 	err := db.QueryRow(ctx, `
-		SELECT id, merchant_id, target_gid, fix_type, priority, title, explanation,
+		SELECT id, merchant_id, target_gid, fix_type, fix_layer, priority, title, explanation,
 		       original, generated, est_impact, status, applied_at, created_at, updated_at
 		FROM pending_fixes WHERE id = $1 AND merchant_id = $2
 	`, fixID, merchantID).Scan(
-		&f.ID, &f.MerchantID, &f.TargetGID, &f.FixType, &f.Priority,
+		&f.ID, &f.MerchantID, &f.TargetGID, &f.FixType, &f.FixLayer, &f.Priority,
 		&f.Title, &f.Explanation, &f.Original, &f.Generated,
 		&f.EstImpact, &f.Status, &f.AppliedAt, &f.CreatedAt, &f.UpdatedAt,
 	)
@@ -119,13 +124,16 @@ func InsertFix(ctx context.Context, db *pgxpool.Pool, f Fix) (int64, error) {
 	if f.Generated == nil {
 		f.Generated = []byte("{}")
 	}
+	if f.FixLayer == "" {
+		f.FixLayer = "content"
+	}
 	var id int64
 	err := db.QueryRow(ctx, `
 		INSERT INTO pending_fixes
-			(merchant_id, target_gid, fix_type, priority, title, explanation, original, generated, est_impact)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			(merchant_id, target_gid, fix_type, fix_layer, priority, title, explanation, original, generated, est_impact)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id
-	`, f.MerchantID, f.TargetGID, f.FixType, f.Priority, f.Title, f.Explanation,
+	`, f.MerchantID, f.TargetGID, f.FixType, f.FixLayer, f.Priority, f.Title, f.Explanation,
 		f.Original, f.Generated, f.EstImpact,
 	).Scan(&id)
 	return id, err

@@ -8,7 +8,9 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/riverqueue/river"
+	"github.com/austinokafor/geo-backend/internal/crypto"
 	"github.com/austinokafor/geo-backend/internal/jobs"
+	"github.com/austinokafor/geo-backend/internal/shopify"
 	"github.com/austinokafor/geo-backend/internal/store"
 )
 
@@ -161,6 +163,33 @@ func (h *Handler) RejectFix(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "rejected"})
+}
+
+// GetSchemaStatus checks whether the GEO.visibility JSON-LD metafield has been
+// set on the merchant's shop — used by the frontend to show "Schema active" state.
+func (h *Handler) GetSchemaStatus(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+
+	token, err := crypto.Decrypt(m.AccessTokenEnc, []byte(h.Config.EncryptionKey))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "token decrypt failed")
+	}
+
+	value, err := shopify.GetShopMetafieldValue(
+		c.Request().Context(), m.ShopDomain, token, "geo_visibility", "schema_json",
+	)
+	if err != nil {
+		// Non-fatal — metafield just doesn't exist yet
+		return c.JSON(http.StatusOK, map[string]any{"active": false, "value": nil})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"active": value != "",
+		"value":  value,
+	})
 }
 
 func (h *Handler) GetBrandRecognition(c echo.Context) error {

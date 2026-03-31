@@ -1,0 +1,6 @@
+api_version = "2025-01"
+
+[[extensions]]
+  name = "GEO Visibility Schema"
+  handle = "geo-visibility-schema"
+  type = "theme"

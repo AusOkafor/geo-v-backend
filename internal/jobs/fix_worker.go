@@ -226,7 +226,7 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 	var applyErr error
 	switch fix.FixType(f.FixType) {
 	case fix.FixDescription:
-		// Extract new description from generated JSONB
+		// Extract new description from generated JSONB and push via Shopify product API.
 		var gen struct {
 			Description string `json:"description"`
 		}
@@ -235,9 +235,35 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 			break
 		}
 		applyErr = shopify.UpdateDescription(ctx, merchant.ShopDomain, token, f.TargetGID, gen.Description)
+
+	case fix.FixSchema:
+		// Store JSON-LD as a shop metafield so the Theme App Extension can render it.
+		// The extension reads geo_visibility.schema_json from the storefront.
+		var gen struct {
+			Schema string `json:"schema"`
+		}
+		if err := unmarshalJSON(f.Generated, &gen); err != nil || gen.Schema == "" {
+			applyErr = fmt.Errorf("fix apply: no schema in generated content")
+			break
+		}
+		if err := shopify.SetShopMetafield(
+			ctx, merchant.ShopDomain, token,
+			"geo_visibility", "schema_json", "json", gen.Schema,
+		); err != nil {
+			applyErr = fmt.Errorf("fix apply: set schema metafield: %w", err)
+			break
+		}
+		// Grant storefront read access so the Liquid theme extension can read it.
+		// Non-fatal if this fails — merchant can still enable manually.
+		if err := shopify.GrantStorefrontMetafieldAccess(
+			ctx, merchant.ShopDomain, token, "geo_visibility", "schema_json",
+		); err != nil {
+			slog.Warn("fix apply: storefront metafield access grant failed (non-fatal)",
+				"fix_id", f.ID, "err", err)
+		}
+
 	default:
-		// faq, schema, listing cannot be auto-applied via API — mark as manual
-		// so the merchant knows the fix was acknowledged but needs manual action.
+		// faq, listing cannot be auto-applied — mark as manual.
 		slog.Info("fix apply: manual action required",
 			"fix_id", f.ID, "fix_type", f.FixType, "merchant_id", job.Args.MerchantID)
 		return store.SetFixStatus(ctx, w.db, f.ID, "manual")

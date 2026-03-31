@@ -53,6 +53,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	api.GET("/fixes/:id", h.GetFix)
 	api.POST("/fixes/:id/approve", h.ApproveFix)
 	api.POST("/fixes/:id/reject", h.RejectFix)
+	api.GET("/schema/status", h.GetSchemaStatus)
 	api.GET("/scans/status", h.GetScanStatus)
 	api.POST("/scans", h.TriggerScan)
 	api.POST("/sync", h.TriggerSync)

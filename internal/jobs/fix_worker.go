@@ -237,18 +237,44 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 		applyErr = shopify.UpdateDescription(ctx, merchant.ShopDomain, token, f.TargetGID, gen.Description)
 
 	case fix.FixSchema:
-		// Store JSON-LD as a shop metafield so the Theme App Extension can render it.
-		// The extension reads geo_visibility.schema_json from the storefront.
+		// Build schema programmatically from real Shopify data.
+		// AI only contributes the brand description text — all structural fields
+		// (URLs, prices, product handles) come from the Shopify API.
 		var gen struct {
-			Schema string `json:"schema"`
+			BrandDescription string `json:"brand_description"`
 		}
-		if err := unmarshalJSON(f.Generated, &gen); err != nil || gen.Schema == "" {
-			applyErr = fmt.Errorf("fix apply: no schema in generated content")
+		_ = unmarshalJSON(f.Generated, &gen) // non-fatal if missing — description is optional
+
+		shopifyProducts, err := shopify.GetTopProducts(ctx, merchant.ShopDomain, token, 5)
+		if err != nil {
+			slog.Warn("fix apply: could not fetch products for schema (non-fatal)", "err", err)
+		}
+
+		schemaProducts := make([]fix.SchemaProduct, 0, len(shopifyProducts))
+		for _, p := range shopifyProducts {
+			schemaProducts = append(schemaProducts, fix.SchemaProduct{
+				Handle:   p.Handle,
+				Title:    p.Title,
+				MinPrice: p.MinPrice,
+				Currency: p.Currency,
+				ImageURL: p.ImageURL,
+			})
+		}
+
+		schemaJSON, err := fix.BuildSchema(fix.SchemaInput{
+			BrandName:        merchant.BrandName,
+			ShopDomain:       merchant.ShopDomain,
+			BrandDescription: gen.BrandDescription,
+			TopProducts:      schemaProducts,
+		})
+		if err != nil {
+			applyErr = fmt.Errorf("fix apply: build schema: %w", err)
 			break
 		}
+
 		if err := shopify.SetShopMetafield(
 			ctx, merchant.ShopDomain, token,
-			"geo_visibility", "schema_json", "json", gen.Schema,
+			"geo_visibility", "schema_json", "json", schemaJSON,
 		); err != nil {
 			applyErr = fmt.Errorf("fix apply: set schema metafield: %w", err)
 			break

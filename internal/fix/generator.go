@@ -179,11 +179,11 @@ Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibil
 			in.BrandName, in.Category, gapSection)
 
 	case FixSchema:
-		return fmt.Sprintf(`Generate JSON-LD Product schema markup for brand "%s" (category: %s).%s
+		return fmt.Sprintf(`Write a brand description for "%s" (category: %s) to be embedded in JSON-LD structured data.%s
 
-Include: @type Product, name, brand, description (incorporating the missed queries above), offers with price range, aggregateRating placeholder.
+The description must be 150–200 words, factual, and directly address the missed buyer queries above. It must focus on verifiable brand attributes: product specifics, materials, price positioning, and who the brand serves. Do NOT invent review counts, ratings, testimonials, or any claims that cannot be verified from public information.
 
-Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility", "generated": {"schema": "JSON-LD string"}}`,
+Return JSON: {"title": "Fix title", "explanation": "Why structured schema markup improves AI visibility", "generated": {"brand_description": "150-200 word factual brand description"}}`,
 			in.BrandName, in.Category, gapSection)
 
 	case FixListing:

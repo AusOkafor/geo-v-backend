@@ -12,7 +12,7 @@
 
 {%- if schema_json != blank -%}
 <script type="application/ld+json">
-{{ schema_json.value }}
+{{ schema_json.value | json }}
 </script>
 {%- endif -%}
 

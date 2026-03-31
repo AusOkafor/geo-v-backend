@@ -6,9 +6,35 @@ import (
 	"fmt"
 )
 
+// getShopGID returns the shop's canonical GID (e.g. "gid://shopify/Shop/12345678").
+func getShopGID(ctx context.Context, shop, token string) (string, error) {
+	const q = `query { shop { id } }`
+	raw, err := Query(ctx, shop, token, q, nil)
+	if err != nil {
+		return "", fmt.Errorf("shopify: getShopGID: %w", err)
+	}
+	var resp struct {
+		Shop struct {
+			ID string `json:"id"`
+		} `json:"shop"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return "", fmt.Errorf("shopify: getShopGID decode: %w", err)
+	}
+	if resp.Shop.ID == "" {
+		return "", fmt.Errorf("shopify: getShopGID: empty id")
+	}
+	return resp.Shop.ID, nil
+}
+
 // SetShopMetafield creates or updates a metafield on the shop object.
 // valueType should be a valid Shopify metafield type, e.g. "json", "single_line_text_field".
 func SetShopMetafield(ctx context.Context, shop, token, namespace, key, valueType, value string) error {
+	shopGID, err := getShopGID(ctx, shop, token)
+	if err != nil {
+		return err
+	}
+
 	const mutation = `
 mutation SetMetafield($metafields: [MetafieldsSetInput!]!) {
   metafieldsSet(metafields: $metafields) {
@@ -19,7 +45,7 @@ mutation SetMetafield($metafields: [MetafieldsSetInput!]!) {
 	vars := map[string]any{
 		"metafields": []map[string]any{
 			{
-				"ownerId":   "gid://shopify/Shop/1", // resolved server-side by Shopify from token
+				"ownerId":   shopGID,
 				"namespace": namespace,
 				"key":       key,
 				"type":      valueType,

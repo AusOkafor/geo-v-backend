@@ -2,5 +2,6 @@ api_version = "2025-01"
 
 [[extensions]]
   name = "GEO Visibility Schema"
-  handle = "geo-visibility-schema"
+  handle = "geo-visibility-schema"  
+uid = "b3f5fda9-2fd0-8c81-ab36-68d16f25508a78124e35"
   type = "theme"

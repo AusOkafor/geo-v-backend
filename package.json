@@ -1,0 +1,8 @@
+{
+  "name": "geo-visibility",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "shopify": "shopify"
+  }
+}

@@ -128,7 +128,8 @@ func BuildSchema(in SchemaInput) (string, error) {
 		"about":    brand,
 	}
 	if in.BrandDescription != "" {
-		collectionPage["description"] = in.BrandDescription
+		// Normalize whitespace: collapse \r\n, \n, and runs of spaces from AI output
+		collectionPage["description"] = strings.Join(strings.Fields(in.BrandDescription), " ")
 	}
 	if len(items) > 0 {
 		collectionPage["mainEntity"] = map[string]any{

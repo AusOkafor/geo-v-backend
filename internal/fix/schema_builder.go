@@ -18,12 +18,20 @@ type SchemaProduct struct {
 	ImageURL string
 }
 
+// SchemaFAQ is a single Q&A pair for FAQPage schema.
+type SchemaFAQ struct {
+	Question string
+	Answer   string
+}
+
 // SchemaInput contains all real data needed to build a valid JSON-LD schema.
 type SchemaInput struct {
 	BrandName        string
 	ShopDomain       string
-	BrandDescription string // AI-generated copy only — no structural data
+	BrandDescription string      // AI-generated copy only — no structural data
 	TopProducts      []SchemaProduct
+	SocialLinks      []string    // sameAs links (Instagram, TikTok, etc.) — emitted only if non-empty
+	FAQs             []SchemaFAQ // from applied FAQ fix — emitted as FAQPage if non-empty
 }
 
 // formatPrice converts a raw Shopify price string to a clean display value.
@@ -57,14 +65,30 @@ func BuildSchema(in SchemaInput) (string, error) {
 		"url":   storeURL,
 	}
 
-	// Organization ties brand + website together for entity consistency.
-	// AI platforms use Organization to establish brand authority signals.
+	// Organization — establishes brand identity across platforms.
+	// sameAs links AI entity recognition across Instagram, TikTok, etc.
 	organization := map[string]any{
 		"@type": "Organization",
 		"@id":   orgID,
 		"name":  in.BrandName,
 		"url":   storeURL,
 		"brand": map[string]any{"@id": brandID},
+	}
+	if len(in.SocialLinks) > 0 {
+		organization["sameAs"] = in.SocialLinks
+	}
+
+	// WebSite — fully defined with SearchAction so AI assistants know the site is navigable.
+	website := map[string]any{
+		"@type": "WebSite",
+		"@id":   websiteID,
+		"name":  in.BrandName,
+		"url":   storeURL,
+		"potentialAction": map[string]any{
+			"@type":       "SearchAction",
+			"target":      storeURL + "/search?q={search_term_string}",
+			"query-input": "required name=search_term_string",
+		},
 	}
 
 	items := make([]map[string]any, 0, len(in.TopProducts))
@@ -96,23 +120,16 @@ func BuildSchema(in SchemaInput) (string, error) {
 	}
 
 	collectionPage := map[string]any{
-		"@type": "CollectionPage",
-		"@id":   collectionID,
-		"name":  in.BrandName,
-		"url":   storeURL,
-		"isPartOf": map[string]any{
-			"@type": "WebSite",
-			"@id":   websiteID,
-			"url":   storeURL,
-			"name":  in.BrandName,
-		},
-		"about": brand,
+		"@type":    "CollectionPage",
+		"@id":      collectionID,
+		"name":     in.BrandName,
+		"url":      storeURL,
+		"isPartOf": map[string]any{"@id": websiteID},
+		"about":    brand,
 	}
-
 	if in.BrandDescription != "" {
 		collectionPage["description"] = in.BrandDescription
 	}
-
 	if len(items) > 0 {
 		collectionPage["mainEntity"] = map[string]any{
 			"@type":           "ItemList",
@@ -121,9 +138,32 @@ func BuildSchema(in SchemaInput) (string, error) {
 		}
 	}
 
+	graph := []any{organization, website, collectionPage}
+
+	// FAQPage — included when an approved FAQ fix exists.
+	// Gives AI a structured Q&A to cite directly.
+	if len(in.FAQs) > 0 {
+		faqItems := make([]map[string]any, 0, len(in.FAQs))
+		for _, faq := range in.FAQs {
+			faqItems = append(faqItems, map[string]any{
+				"@type": "Question",
+				"name":  faq.Question,
+				"acceptedAnswer": map[string]any{
+					"@type": "Answer",
+					"text":  faq.Answer,
+				},
+			})
+		}
+		graph = append(graph, map[string]any{
+			"@type":          "FAQPage",
+			"@id":            storeURL + "/#faq",
+			"mainEntity":     faqItems,
+		})
+	}
+
 	schema := map[string]any{
 		"@context": "https://schema.org",
-		"@graph":   []any{organization, collectionPage},
+		"@graph":   graph,
 	}
 
 	b, err := json.Marshal(schema)

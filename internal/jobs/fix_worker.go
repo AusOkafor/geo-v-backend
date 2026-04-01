@@ -261,11 +261,38 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 			})
 		}
 
+		// Pull applied FAQ fix to include Q&A pairs in FAQPage schema entity.
+		var faqs []fix.SchemaFAQ
+		if appliedFixes, err := store.GetFixes(ctx, w.db, merchant.ID, "applied"); err == nil {
+			for _, af := range appliedFixes {
+				if fix.FixType(af.FixType) != fix.FixFAQ {
+					continue
+				}
+				var faqGen struct {
+					FAQs []struct {
+						Question string `json:"question"`
+						Answer   string `json:"answer"`
+					} `json:"faqs"`
+				}
+				if json.Unmarshal(af.Generated, &faqGen) == nil {
+					limit := len(faqGen.FAQs)
+					if limit > 5 {
+						limit = 5
+					}
+					for _, q := range faqGen.FAQs[:limit] {
+						faqs = append(faqs, fix.SchemaFAQ{Question: q.Question, Answer: q.Answer})
+					}
+				}
+				break
+			}
+		}
+
 		schemaJSON, err := fix.BuildSchema(fix.SchemaInput{
 			BrandName:        merchant.BrandName,
 			ShopDomain:       merchant.ShopDomain,
 			BrandDescription: gen.BrandDescription,
 			TopProducts:      schemaProducts,
+			FAQs:             faqs,
 		})
 		if err != nil {
 			applyErr = fmt.Errorf("fix apply: build schema: %w", err)

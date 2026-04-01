@@ -22,8 +22,8 @@ type TopProduct struct {
 // Used to build real product entries in schema markup — never for display.
 func GetTopProducts(ctx context.Context, shop, token string, limit int, productType string) ([]TopProduct, error) {
 	const q = `
-query GetTopProducts($first: Int!, $query: String!) {
-  products(first: $first, query: $query) {
+query GetTopProducts($first: Int!, $filter: String!) {
+  products(first: $first, query: $filter) {
     edges {
       node {
         handle
@@ -79,7 +79,7 @@ type productQueryResp struct {
 }
 
 func fetchProducts(ctx context.Context, shop, token, q, queryFilter string, limit int) ([]TopProduct, error) {
-	raw, err := Query(ctx, shop, token, q, map[string]any{"first": limit, "query": queryFilter})
+	raw, err := Query(ctx, shop, token, q, map[string]any{"first": limit, "filter": queryFilter})
 	if err != nil {
 		return nil, fmt.Errorf("shopify: GetTopProducts: %w", err)
 	}

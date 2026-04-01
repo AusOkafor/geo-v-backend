@@ -111,13 +111,11 @@ query GetShopMetafield($namespace: String!, $key: String!) {
 // This is required for the Theme App Extension's Liquid template to read the metafield.
 // It is idempotent — safe to call multiple times.
 func GrantStorefrontMetafieldAccess(ctx context.Context, shop, token, namespace, key string) error {
-	// First, find the metafield definition ID
+	// Check whether a definition already exists
 	const findQuery = `
 query FindMetafieldDef($namespace: String!, $key: String!) {
   metafieldDefinitions(first: 1, ownerType: SHOP, namespace: $namespace, key: $key) {
-    edges {
-      node { id }
-    }
+    edges { node { id } }
   }
 }`
 	raw, err := Query(ctx, shop, token, findQuery, map[string]any{
@@ -131,9 +129,7 @@ query FindMetafieldDef($namespace: String!, $key: String!) {
 	var findResp struct {
 		MetafieldDefinitions struct {
 			Edges []struct {
-				Node struct {
-					ID string `json:"id"`
-				} `json:"node"`
+				Node struct{ ID string `json:"id"` } `json:"node"`
 			} `json:"edges"`
 		} `json:"metafieldDefinitions"`
 	}
@@ -146,10 +142,8 @@ query FindMetafieldDef($namespace: String!, $key: String!) {
 		return createMetafieldDefinition(ctx, shop, token, namespace, key)
 	}
 
-	defID := findResp.MetafieldDefinitions.Edges[0].Node.ID
-
 	// Update existing definition to enable storefront access.
-	// id must be inside the definition input — not a separate argument.
+	// MetafieldDefinitionUpdateInput identifies the definition by namespace+key+ownerType, not id.
 	const updateMutation = `
 mutation UpdateMetafieldDef($definition: MetafieldDefinitionUpdateInput!) {
   metafieldDefinitionUpdate(definition: $definition) {
@@ -159,7 +153,9 @@ mutation UpdateMetafieldDef($definition: MetafieldDefinitionUpdateInput!) {
 }`
 	updateRaw, err := Query(ctx, shop, token, updateMutation, map[string]any{
 		"definition": map[string]any{
-			"id": defID,
+			"namespace": namespace,
+			"key":       key,
+			"ownerType": "SHOP",
 			"access": map[string]any{
 				"storefront": "PUBLIC_READ",
 			},

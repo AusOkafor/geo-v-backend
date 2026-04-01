@@ -245,7 +245,7 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 		}
 		_ = unmarshalJSON(f.Generated, &gen) // non-fatal if missing — description is optional
 
-		shopifyProducts, err := shopify.GetTopProducts(ctx, merchant.ShopDomain, token, 5)
+		shopifyProducts, err := shopify.GetTopProducts(ctx, merchant.ShopDomain, token, 5, merchant.Category)
 		if err != nil {
 			slog.Warn("fix apply: could not fetch products for schema (non-fatal)", "err", err)
 		}

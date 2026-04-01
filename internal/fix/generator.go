@@ -181,9 +181,14 @@ Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibil
 	case FixSchema:
 		return fmt.Sprintf(`Write a brand description for "%s" (category: %s) to be embedded in JSON-LD structured data.%s
 
-The description must be 150–200 words, factual, and directly address the missed buyer queries above. It must focus on verifiable brand attributes: product specifics, materials, price positioning, and who the brand serves. Do NOT invent review counts, ratings, testimonials, or any claims that cannot be verified from public information.
+Requirements:
+- 120–160 words maximum — concise, structured, intent-driven
+- Focus exclusively on: materials (e.g. 14k/18k gold), price positioning (e.g. under $200), use cases (gifts, everyday wear), and differentiation (no luxury markup)
+- Naturally use exact phrases from the missed queries above as anchor phrases — these are the literal searches buyers type
+- Write as an independent brand — do NOT mention any suppliers, sourcing partners, wholesale vendors, or third-party brand names
+- Do NOT invent review counts, ratings, testimonials, or any unverifiable claims
 
-Return JSON: {"title": "Fix title", "explanation": "Why structured schema markup improves AI visibility", "generated": {"brand_description": "150-200 word factual brand description"}}`,
+Return JSON: {"title": "Fix title", "explanation": "Why structured schema markup improves AI visibility", "generated": {"brand_description": "120-160 word factual brand description"}}`,
 			in.BrandName, in.Category, gapSection)
 
 	case FixListing:

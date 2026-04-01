@@ -1,14 +1,14 @@
 name = "GEO.visibility"
-client_id = "058ce5728ebfc9f888708fe67411eb60"  # Fill in from Shopify Partners dashboard → App setup → Client ID
-application_url = "https://geo-visibility-backend.onrender.com"
-embedded = true
+client_id = "058ce5728ebfc9f888708fe67411eb60"
+application_url = "https://geo-v-backend.onrender.com"
+embedded = false
 
 [access_scopes]
   scopes = "read_products,write_products,read_themes,write_themes"
 
 [auth]
   redirect_urls = [
-    "https://geo-visibility-backend.onrender.com/oauth/callback"
+    "https://geo-v-backend.onrender.com/oauth/callback"
   ]
 
 [webhooks]

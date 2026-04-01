@@ -23,7 +23,7 @@ type TopProduct struct {
 func GetTopProducts(ctx context.Context, shop, token string, limit int, productType string) ([]TopProduct, error) {
 	const q = `
 query GetTopProducts($first: Int!, $filter: String!) {
-  products(first: $first, query: $filter) {
+  products(first: $first, query: $filter, sortKey: TITLE) {
     edges {
       node {
         handle

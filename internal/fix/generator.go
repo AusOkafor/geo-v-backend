@@ -148,7 +148,7 @@ func (g *Generator) Generate(ctx context.Context, in GenerateInput) (*GenerateRe
 func buildPrompt(in GenerateInput) string {
 	gapSection := ""
 	if len(in.QueryGaps) > 0 {
-		gapSection = fmt.Sprintf("\n\nQueries AI was asked where this brand did NOT appear (target these specifically):\n")
+		gapSection = "\n\nQueries AI was asked where this brand did NOT appear (target these specifically):\n"
 		for i, q := range in.QueryGaps {
 			if i >= 10 {
 				break
@@ -214,9 +214,7 @@ func stripMarkdown(s string) string {
 	// Strip ```json ... ``` or ``` ... ``` fences
 	if idx := strings.Index(s, "```"); idx >= 0 {
 		s = s[idx+3:]
-		if strings.HasPrefix(s, "json") {
-			s = s[4:]
-		}
+		s = strings.TrimPrefix(s, "json")
 		if end := strings.LastIndex(s, "```"); end >= 0 {
 			s = s[:end]
 		}

@@ -330,15 +330,6 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 	return store.SetFixStatus(ctx, w.db, f.ID, "applied")
 }
 
-func priorityForType(t fix.FixType) string {
-	switch t {
-	case fix.FixDescription, fix.FixFAQ:
-		return "high"
-	default:
-		return "medium"
-	}
-}
-
 func unmarshalJSON(data []byte, v any) error {
 	if len(data) == 0 {
 		return fmt.Errorf("empty JSON")

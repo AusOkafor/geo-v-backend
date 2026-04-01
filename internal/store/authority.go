@@ -6,20 +6,26 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// AuthorityScore measures how trusted/cited a brand is by AI from external web sources.
-// Score is 0-100, computed from two signals:
-//   - Grounded citation rate (60%): % of web-grounded AI queries where the brand was mentioned
-//   - Listing completeness (40%): % of authority-layer fixes that have been applied
+// AuthorityScore holds two independent signals for how trusted a brand is.
+// They are intentionally kept separate — grounded_rate is AI-derived data,
+// listing completeness is a merchant action. Mixing them into one number
+// is misleading, so we expose both and let the UI show them distinctly.
 type AuthorityScore struct {
-	Score           int    `json:"score"`
-	GroundedRate    int    `json:"grounded_rate"`    // % of grounded queries where mentioned
+	// GroundedRate: % of web-grounded AI queries (last 30 days) where the brand was mentioned.
+	// This is the primary authority signal — it reflects real external citations AI found.
+	GroundedRate    int    `json:"grounded_rate"`
 	GroundedQueries int    `json:"grounded_queries"` // total grounded queries in last 30 days
-	ListingsDone    int    `json:"listings_done"`    // applied/manual authority fixes
-	ListingsTotal   int    `json:"listings_total"`   // total authority fixes generated
-	Tier            string `json:"tier"`             // none | low | building | established
+	GroundedHits    int    `json:"grounded_hits"`    // how many of those mentioned the brand
+	// Tier is derived solely from GroundedRate — the real-data signal.
+	Tier string `json:"tier"` // none | low | building | established
+
+	// ListingsDone / ListingsTotal: how many authority-layer fixes the merchant has applied.
+	// Shown separately — reflects merchant effort, not AI recognition.
+	ListingsDone  int `json:"listings_done"`
+	ListingsTotal int `json:"listings_total"`
 }
 
-// GetAuthorityScore computes the authority score for a merchant.
+// GetAuthorityScore computes both authority signals for a merchant.
 // Grounded data comes from citation_records in the last 30 days.
 // Listing data comes from pending_fixes where fix_layer = 'authority'.
 func GetAuthorityScore(ctx context.Context, db *pgxpool.Pool, merchantID int64) (AuthorityScore, error) {
@@ -59,29 +65,23 @@ FROM grounded, listings`
 		groundedRate = int(float64(groundedHits) / float64(groundedTotal) * 100)
 	}
 
-	var listingRate int
-	if total > 0 {
-		listingRate = int(float64(done) / float64(total) * 100)
-	}
-
-	score := int(float64(groundedRate)*0.6 + float64(listingRate)*0.4)
-
+	// Tier is derived from the real AI-data signal only.
 	tier := "none"
 	switch {
-	case score >= 61:
+	case groundedRate >= 61:
 		tier = "established"
-	case score >= 26:
+	case groundedRate >= 26:
 		tier = "building"
-	case score >= 1:
+	case groundedRate >= 1:
 		tier = "low"
 	}
 
 	return AuthorityScore{
-		Score:           score,
 		GroundedRate:    groundedRate,
 		GroundedQueries: groundedTotal,
+		GroundedHits:    groundedHits,
+		Tier:            tier,
 		ListingsDone:    done,
 		ListingsTotal:   total,
-		Tier:            tier,
 	}, nil
 }

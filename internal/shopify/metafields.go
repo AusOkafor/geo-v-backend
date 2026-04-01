@@ -148,17 +148,18 @@ query FindMetafieldDef($namespace: String!, $key: String!) {
 
 	defID := findResp.MetafieldDefinitions.Edges[0].Node.ID
 
-	// Update existing definition to enable storefront access
+	// Update existing definition to enable storefront access.
+	// id must be inside the definition input — not a separate argument.
 	const updateMutation = `
-mutation UpdateMetafieldDef($id: ID!, $access: MetafieldDefinitionUpdateInput!) {
-  metafieldDefinitionUpdate(id: $id, definition: $access) {
+mutation UpdateMetafieldDef($definition: MetafieldDefinitionUpdateInput!) {
+  metafieldDefinitionUpdate(definition: $definition) {
     updatedDefinition { id }
     userErrors { field message }
   }
 }`
 	updateRaw, err := Query(ctx, shop, token, updateMutation, map[string]any{
-		"id": defID,
-		"access": map[string]any{
+		"definition": map[string]any{
+			"id": defID,
 			"access": map[string]any{
 				"storefront": "PUBLIC_READ",
 			},

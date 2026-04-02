@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/austinokafor/geo-backend/internal/crypto"
@@ -198,10 +199,11 @@ type FixApplyWorker struct {
 	river.WorkerDefaults[FixApplyJobArgs]
 	db            *pgxpool.Pool
 	encryptionKey []byte
+	riverClient   *river.Client[pgx.Tx]
 }
 
-func NewFixApplyWorker(db *pgxpool.Pool, encKey []byte) *FixApplyWorker {
-	return &FixApplyWorker{db: db, encryptionKey: encKey}
+func NewFixApplyWorker(db *pgxpool.Pool, encKey []byte, riverClient *river.Client[pgx.Tx]) *FixApplyWorker {
+	return &FixApplyWorker{db: db, encryptionKey: encKey, riverClient: riverClient}
 }
 
 func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArgs]) error {
@@ -316,8 +318,17 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 				"fix_id", f.ID, "err", err)
 		}
 
+	case fix.FixFAQ:
+		// FAQ Q&A pairs are embedded into the schema as a FAQPage entity.
+		// Mark as applied and rebuild schema so the FAQPage appears in @graph immediately.
+		if err := store.SetFixStatus(ctx, w.db, f.ID, "applied"); err != nil {
+			return err
+		}
+		_, _ = w.riverClient.Insert(ctx, SchemaRebuildJobArgs{MerchantID: job.Args.MerchantID}, nil)
+		return nil
+
 	default:
-		// faq, listing cannot be auto-applied — mark as manual.
+		// listing cannot be auto-applied — mark as manual.
 		slog.Info("fix apply: manual action required",
 			"fix_id", f.ID, "fix_type", f.FixType, "merchant_id", job.Args.MerchantID)
 		return store.SetFixStatus(ctx, w.db, f.ID, "manual")

@@ -82,13 +82,11 @@ func main() {
 		fixGenerator = fix.NewGenerator(cfg.AnthropicKey)
 	}
 
-	// Build River workers — scan worker needs the riverClient to enqueue fix
-	// generation after each scan, so it is registered after the client is created.
+	// Build River workers — workers that need the riverClient are registered after the client is created.
 	workers := river.NewWorkers()
 	river.AddWorker(workers, jobs.NewProductSyncWorker(pool, encKey))
 	river.AddWorker(workers, jobs.NewDataDeletionWorker(pool))
 	river.AddWorker(workers, jobs.NewFixGenerationWorker(pool, fixGenerator))
-	river.AddWorker(workers, jobs.NewFixApplyWorker(pool, encKey))
 	river.AddWorker(workers, jobs.NewSchemaRebuildWorker(pool, encKey))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
@@ -111,6 +109,7 @@ func main() {
 	river.AddWorker(workers, jobs.NewScanWorker(pool, aiClients, riverClient))
 	river.AddWorker(workers, jobs.NewDailyScanScheduler(pool, riverClient))
 	river.AddWorker(workers, jobs.NewWeeklyFixScheduler(pool, riverClient))
+	river.AddWorker(workers, jobs.NewFixApplyWorker(pool, encKey, riverClient))
 
 	if err := riverClient.Start(ctx); err != nil {
 		slog.Error("river start failed", "err", err)

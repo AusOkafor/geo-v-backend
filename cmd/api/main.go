@@ -61,7 +61,7 @@ func main() {
 	if riverDSN == "" {
 		riverDSN = cfg.DatabaseDirectURL
 	}
-	riverPool, err := db.NewPool(ctx, riverDSN, false)
+	riverPool, err := db.NewPoolWithSize(ctx, riverDSN, false, 3)
 	if err != nil {
 		slog.Error("river db connect failed", "err", err)
 		os.Exit(1)

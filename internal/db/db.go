@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// NewPool creates a pgxpool.Pool with production-tuned settings.
+// NewPool creates a pgxpool.Pool with connection limits tuned for Supabase free tier.
 //
 // Which URL to pass:
 //   - cmd/api     → cfg.DatabaseURL       (Supabase transaction pooler)
@@ -17,13 +17,19 @@ import (
 // simpleProtocol should be true only for the transaction pooler (Supavisor).
 // River's internal queries break with simple protocol, so pass false for workers.
 func NewPool(ctx context.Context, databaseURL string, simpleProtocol bool) (*pgxpool.Pool, error) {
+	return NewPoolWithSize(ctx, databaseURL, simpleProtocol, 5)
+}
+
+// NewPoolWithSize creates a pool with an explicit max connection count.
+// Use for River/session-mode pools where Supabase limits are tight.
+func NewPoolWithSize(ctx context.Context, databaseURL string, simpleProtocol bool, maxConns int32) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, err
 	}
 
-	cfg.MaxConns = 20
-	cfg.MinConns = 2
+	cfg.MaxConns = maxConns
+	cfg.MinConns = 0
 	cfg.MaxConnLifetime = 30 * time.Minute
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 1 * time.Minute

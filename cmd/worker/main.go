@@ -47,7 +47,7 @@ func main() {
 	ctx := context.Background()
 
 	// Workers use the DIRECT connection (River needs LISTEN/NOTIFY, pooler breaks it)
-	pool, err := db.NewPool(ctx, cfg.DatabaseDirectURL, false) // false = direct connection, River needs extended protocol
+	pool, err := db.NewPoolWithSize(ctx, cfg.DatabaseDirectURL, false, 5) // River needs extended protocol; keep small for Supabase free tier
 	if err != nil {
 		slog.Error("db connect failed", "err", err)
 		os.Exit(1)

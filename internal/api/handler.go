@@ -37,6 +37,8 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	api := e.Group("/api/v1", sessionAuth(h.Config))
 	api.GET("/merchant", h.GetMerchant)
 	api.PATCH("/merchant", h.UpdateMerchant)
+	api.GET("/merchant/social", h.GetSocialLinks)
+	api.PATCH("/merchant/social", h.UpdateSocialLinks)
 	api.GET("/visibility/scores", h.GetVisibilityScores)
 	api.GET("/visibility/daily", h.GetDailyScores)
 	api.GET("/visibility/sources", h.GetPlatformSources)

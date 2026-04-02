@@ -292,6 +292,7 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 			ShopDomain:       merchant.ShopDomain,
 			BrandDescription: gen.BrandDescription,
 			TopProducts:      schemaProducts,
+			SocialLinks:      merchant.SocialLinks,
 			FAQs:             faqs,
 		})
 		if err != nil {

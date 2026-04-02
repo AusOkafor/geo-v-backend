@@ -58,6 +58,38 @@ func (h *Handler) UpdateMerchant(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
 }
 
+func (h *Handler) GetSocialLinks(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"social_links": m.SocialLinks})
+}
+
+func (h *Handler) UpdateSocialLinks(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	var body struct {
+		SocialLinks []string `json:"social_links"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
+	}
+	// Strip empty strings so we never store blank entries
+	clean := make([]string, 0, len(body.SocialLinks))
+	for _, l := range body.SocialLinks {
+		if l != "" {
+			clean = append(clean, l)
+		}
+	}
+	if err := store.UpdateSocialLinks(c.Request().Context(), h.DB, m.ID, clean); err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
 func (h *Handler) GetVisibilityScores(c echo.Context) error {
 	m, err := h.getAuthMerchant(c)
 	if err != nil {

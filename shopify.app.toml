@@ -1,6 +1,6 @@
 name = "GEO.visibility"
 client_id = "058ce5728ebfc9f888708fe67411eb60"
-application_url = "https://geo-v-backend.onrender.com"
+application_url = "https://geo-visibility-eight.vercel.app/dashboard"
 embedded = false
 
 [access_scopes]

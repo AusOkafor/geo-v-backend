@@ -30,7 +30,7 @@
     "name": {{ shop.name | json }},
     "url": {{ shop.url | json }}
   },
-  "image": [{% for image in product.images %}{% unless forloop.first %},{% endunless %}{{ image.src | img_url: "1024x1024" | prepend: "https:" | json }}{% endfor %}],
+  "image": [{% for image in product.images %}{% unless forloop.first %},{% endunless %}{{ image | image_url: width: 1024 | prepend: "https:" | json }}{% endfor %}],
   "sku": {{ product.selected_or_first_available_variant.sku | default: "" | json }},
   "category": {{ product.type | default: "" | json }},
   "offers": {

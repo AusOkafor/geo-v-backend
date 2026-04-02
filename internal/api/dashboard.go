@@ -84,9 +84,12 @@ func (h *Handler) UpdateSocialLinks(c echo.Context) error {
 			clean = append(clean, l)
 		}
 	}
-	if err := store.UpdateSocialLinks(c.Request().Context(), h.DB, m.ID, clean); err != nil {
+	ctx := c.Request().Context()
+	if err := store.UpdateSocialLinks(ctx, h.DB, m.ID, clean); err != nil {
 		return err
 	}
+	// Rebuild the schema metafield in the background so sameAs links appear immediately.
+	_, _ = h.River.Insert(ctx, jobs.SchemaRebuildJobArgs{MerchantID: m.ID}, nil)
 	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
 }
 

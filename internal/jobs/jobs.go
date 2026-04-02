@@ -76,6 +76,24 @@ func (FixApplyJobArgs) InsertOpts() river.InsertOpts {
 	}
 }
 
+// ─── SchemaRebuildJobArgs ─────────────────────────────────────────────────────
+
+// SchemaRebuildJobArgs rebuilds and re-pushes the shop schema metafield.
+// Triggered when merchant settings change (social links, brand name) so the
+// live schema stays in sync without requiring a new fix approval.
+type SchemaRebuildJobArgs struct {
+	MerchantID int64 `json:"merchant_id"`
+}
+
+func (SchemaRebuildJobArgs) Kind() string { return "schema_rebuild" }
+
+func (SchemaRebuildJobArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		Queue:       "apply",
+		MaxAttempts: 3,
+	}
+}
+
 // ─── DataDeletionJobArgs ──────────────────────────────────────────────────────
 
 // DataDeletionJobArgs deletes all data for a store on GDPR uninstall.

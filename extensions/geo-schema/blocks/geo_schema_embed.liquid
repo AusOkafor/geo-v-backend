@@ -30,7 +30,7 @@
     "name": {{ shop.name | json }},
     "url": {{ shop.url | json }}
   },
-  "image": [{% for image in product.images %}{% unless forloop.first %},{% endunless %}{{ image.src | replace: "//", "https://" | remove_first: "https:https://" | json }}{% endfor %}],
+  "image": [{% for image in product.images %}{% unless forloop.first %},{% endunless %}{%- assign img_url = image.src | split: "//" | last -%}{{ "https://" | append: img_url | json }}{% endfor %}],
   "sku": {{ product.selected_or_first_available_variant.sku | default: "" | json }},
   "category": {{ product.type | default: "" | json }},
   "offers": {

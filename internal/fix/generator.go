@@ -173,7 +173,15 @@ Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibil
 	case FixFAQ:
 		return fmt.Sprintf(`Generate 10 buyer-intent FAQ Q&A pairs for brand "%s" (category: %s) that match how buyers ask ChatGPT, Perplexity, and Gemini for recommendations.%s
 
-Each FAQ question MUST directly match one of the missed queries above (rephrase as a question if needed). Answers should mention the brand name and be 2-4 sentences — rich enough for AI to cite.
+Each FAQ question MUST directly match one of the missed queries above (rephrase as a question if needed).
+
+Answer writing rules:
+- 2–3 sentences per answer — informative, not promotional
+- Mention the brand name naturally once per answer
+- Use descriptive language: "offers", "focuses on", "known for", "designed for" — never "standout brand", "best in 2026", "top choice"
+- Do NOT make unverifiable claims: no "ethically-sourced", "investment-grade", "lasts decades" unless the brand can prove it
+- Do NOT include price ranges — prices change and create trust conflicts if they mismatch the actual store
+- Each answer must describe something real and specific about the brand's products or approach
 
 Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility (mention the specific queries it covers)", "generated": {"faqs": [{"question": "...", "answer": "..."}]}}`,
 			in.BrandName, in.Category, gapSection)
@@ -182,11 +190,13 @@ Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibil
 		return fmt.Sprintf(`Write a brand description for "%s" (category: %s) to be embedded in JSON-LD structured data.%s
 
 Requirements:
-- 120–160 words maximum — concise, structured, intent-driven
-- Focus exclusively on: materials (e.g. 14k/18k gold), price positioning (e.g. under $200), use cases (gifts, everyday wear), and differentiation (no luxury markup)
-- Naturally use exact phrases from the missed queries above as anchor phrases — these are the literal searches buyers type
-- Write as an independent brand — do NOT mention any suppliers, sourcing partners, wholesale vendors, or third-party brand names
-- Do NOT invent review counts, ratings, testimonials, or any unverifiable claims
+- 120–160 words maximum — factual, natural prose
+- Cover: materials, use cases (gifts, everyday wear), and what makes the brand distinct — without inflating claims
+- Address the buyer intent behind the missed queries, but do NOT repeat any phrase more than once
+- Use descriptive language only: "offers", "focuses on", "designed for", "known for" — never superlatives like "best", "standout", "top brand"
+- Do NOT include any price range or pricing claims — prices vary and will be read directly from live product data
+- Do NOT mention certifications, sourcing transparency, warranties, or durability claims unless they are verifiable facts for this brand
+- Do NOT mention any suppliers, third-party brand names, or wholesale vendors
 
 Return JSON: {"title": "Fix title", "explanation": "Why structured schema markup improves AI visibility", "generated": {"brand_description": "120-160 word factual brand description"}}`,
 			in.BrandName, in.Category, gapSection)

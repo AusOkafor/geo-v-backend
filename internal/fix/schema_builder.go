@@ -58,11 +58,17 @@ func BuildSchema(in SchemaInput) (string, error) {
 	websiteID := storeURL + "/#website"
 	collectionID := storeURL + "/#collection"
 
-	brand := map[string]any{
+	// Brand — standalone entity so AI can resolve it across the graph.
+	// sameAs here and on Organization means both entities point to the same social profiles,
+	// maximising the chance that an AI assistant links them to the real-world entity.
+	brandEntity := map[string]any{
 		"@type": "Brand",
 		"@id":   brandID,
 		"name":  in.BrandName,
 		"url":   storeURL,
+	}
+	if len(in.SocialLinks) > 0 {
+		brandEntity["sameAs"] = in.SocialLinks
 	}
 
 	// Organization — establishes brand identity across platforms.
@@ -125,7 +131,7 @@ func BuildSchema(in SchemaInput) (string, error) {
 		"name":     in.BrandName,
 		"url":      storeURL,
 		"isPartOf": map[string]any{"@id": websiteID},
-		"about":    brand,
+		"about":    map[string]any{"@id": brandID}, // reference — Brand is defined as its own @graph node
 	}
 	if in.BrandDescription != "" {
 		// Normalize whitespace: collapse \r\n, \n, and runs of spaces from AI output
@@ -139,7 +145,7 @@ func BuildSchema(in SchemaInput) (string, error) {
 		}
 	}
 
-	graph := []any{organization, website, collectionPage}
+	graph := []any{brandEntity, organization, website, collectionPage}
 
 	// FAQPage — included when an approved FAQ fix exists.
 	// Gives AI a structured Q&A to cite directly.

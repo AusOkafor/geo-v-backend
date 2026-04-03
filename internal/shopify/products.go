@@ -28,7 +28,7 @@ query GetTopProducts($first: Int!, $filter: String!) {
       node {
         handle
         title
-        priceRange {
+        priceRangeV2 {
           minVariantPrice { amount currencyCode }
         }
         featuredImage { url }
@@ -64,12 +64,12 @@ type productQueryResp struct {
 			Node struct {
 				Handle     string `json:"handle"`
 				Title      string `json:"title"`
-				PriceRange struct {
+				PriceRangeV2 struct {
 					Min struct {
 						Amount   string `json:"amount"`
 						Currency string `json:"currencyCode"`
 					} `json:"minVariantPrice"`
-				} `json:"priceRange"`
+				} `json:"priceRangeV2"`
 				FeaturedImage *struct {
 					URL string `json:"url"`
 				} `json:"featuredImage"`
@@ -93,8 +93,8 @@ func fetchProducts(ctx context.Context, shop, token, q, queryFilter string, limi
 		p := TopProduct{
 			Handle:   n.Handle,
 			Title:    n.Title,
-			MinPrice: n.PriceRange.Min.Amount,
-			Currency: n.PriceRange.Min.Currency,
+			MinPrice: n.PriceRangeV2.Min.Amount,
+			Currency: n.PriceRangeV2.Min.Currency,
 		}
 		if n.FeaturedImage != nil {
 			p.ImageURL = n.FeaturedImage.URL

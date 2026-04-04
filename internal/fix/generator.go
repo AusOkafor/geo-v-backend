@@ -81,6 +81,12 @@ type claudeResponse struct {
 	} `json:"content"`
 }
 
+// FAQSuggestion is a single AI-suggested FAQ pair for merchant review.
+type FAQSuggestion struct {
+	Question string `json:"question"`
+	Answer   string `json:"answer"`
+}
+
 // Generatable is implemented by both Generator (real) and MockGenerator (dev/staging).
 type Generatable interface {
 	Generate(ctx context.Context, in GenerateInput) (*GenerateResult, error)
@@ -263,4 +269,73 @@ func parseResult(raw string, _ FixType) (*GenerateResult, error) {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// SuggestFAQs generates 5 neutral, policy-based FAQ suggestions for merchant review.
+// These are safe topics (shipping, returns, materials, sizing, care) that AI assistants
+// treat as trustworthy signals rather than self-promotional content.
+func (g *Generator) SuggestFAQs(ctx context.Context, brandName, category string) ([]FAQSuggestion, error) {
+	prompt := fmt.Sprintf(`Generate exactly 5 FAQ Q&A pairs for a %s brand called "%s".
+
+Topics to cover (pick the 5 most relevant):
+- Shipping times and delivery options
+- Return and exchange policy
+- Materials used in products
+- Sizing or fit guidance
+- Product care instructions
+- International shipping availability
+- Payment options accepted
+
+Rules:
+- Questions must be neutral and practical (what a first-time buyer would ask)
+- Answers must be 1–2 sentences, factual placeholders the merchant can edit
+- Use "[X days]", "[X]", "[material]" as placeholders where real data is needed
+- No brand promotion, no superlatives, no price claims
+
+Return JSON: {"suggestions": [{"question": "...", "answer": "..."}]}`,
+		category, brandName)
+
+	reqBody := claudeRequest{
+		Model:     claudeModel,
+		MaxTokens: 1024,
+		System:    `You generate neutral, factual FAQ suggestions for e-commerce merchants. Return ONLY valid JSON — no markdown, no prose.`,
+		Messages:  []claudeMessage{{Role: "user", Content: prompt}},
+	}
+
+	payload, _ := json.Marshal(reqBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, claudeEndpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-api-key", g.apiKey)
+	req.Header.Set("anthropic-version", claudeVersion)
+	req.Header.Set("content-type", "application/json")
+
+	resp, err := g.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fix: SuggestFAQs claude call: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fix: SuggestFAQs claude HTTP %d", resp.StatusCode)
+	}
+
+	var claudeResp claudeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&claudeResp); err != nil {
+		return nil, fmt.Errorf("fix: SuggestFAQs decode: %w", err)
+	}
+	raw := ""
+	if len(claudeResp.Content) > 0 {
+		raw = claudeResp.Content[0].Text
+	}
+
+	cleaned := stripMarkdown(raw)
+	var result struct {
+		Suggestions []FAQSuggestion `json:"suggestions"`
+	}
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return nil, fmt.Errorf("fix: SuggestFAQs parse: %w", err)
+	}
+	return result.Suggestions, nil
 }

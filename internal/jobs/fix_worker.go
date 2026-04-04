@@ -451,29 +451,36 @@ func (w *SchemaRebuildWorker) Work(ctx context.Context, job *river.Job[SchemaReb
 		}
 	}
 
-	// Pull applied FAQ fix.
+	// Pull FAQs: merchant-provided rows take priority over applied FAQ fix.
 	var faqs []fix.SchemaFAQ
-	if appliedFixes, err := store.GetFixes(ctx, w.db, merchant.ID, "applied"); err == nil {
-		for _, af := range appliedFixes {
-			if fix.FixType(af.FixType) != fix.FixFAQ {
-				continue
-			}
-			var faqGen struct {
-				FAQs []struct {
-					Question string `json:"question"`
-					Answer   string `json:"answer"`
-				} `json:"faqs"`
-			}
-			if json.Unmarshal(af.Generated, &faqGen) == nil {
-				limit := len(faqGen.FAQs)
-				if limit > 5 {
-					limit = 5
+	if merchantFAQs, err := store.GetMerchantFAQs(ctx, w.db, merchant.ID); err == nil && len(merchantFAQs) > 0 {
+		for _, mf := range merchantFAQs {
+			faqs = append(faqs, fix.SchemaFAQ{Question: mf.Question, Answer: mf.Answer})
+		}
+	} else {
+		// Fall back to applied FAQ fix if no merchant-provided FAQs exist.
+		if appliedFixes, err := store.GetFixes(ctx, w.db, merchant.ID, "applied"); err == nil {
+			for _, af := range appliedFixes {
+				if fix.FixType(af.FixType) != fix.FixFAQ {
+					continue
 				}
-				for _, q := range faqGen.FAQs[:limit] {
-					faqs = append(faqs, fix.SchemaFAQ{Question: q.Question, Answer: q.Answer})
+				var faqGen struct {
+					FAQs []struct {
+						Question string `json:"question"`
+						Answer   string `json:"answer"`
+					} `json:"faqs"`
 				}
+				if json.Unmarshal(af.Generated, &faqGen) == nil {
+					limit := len(faqGen.FAQs)
+					if limit > 5 {
+						limit = 5
+					}
+					for _, q := range faqGen.FAQs[:limit] {
+						faqs = append(faqs, fix.SchemaFAQ{Question: q.Question, Answer: q.Answer})
+					}
+				}
+				break
 			}
-			break
 		}
 	}
 

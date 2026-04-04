@@ -4,11 +4,13 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/riverqueue/river"
 	"github.com/austinokafor/geo-backend/internal/crypto"
+	"github.com/austinokafor/geo-backend/internal/fix"
 	"github.com/austinokafor/geo-backend/internal/jobs"
 	"github.com/austinokafor/geo-backend/internal/shopify"
 	"github.com/austinokafor/geo-backend/internal/store"
@@ -431,4 +433,66 @@ func queryInt(c echo.Context, key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// GetMerchantFAQs returns all active merchant-provided FAQs.
+func (h *Handler) GetMerchantFAQs(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	faqs, err := store.GetMerchantFAQs(c.Request().Context(), h.DB, m.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, faqs)
+}
+
+// UpdateMerchantFAQs replaces all FAQs for the merchant and triggers a schema rebuild.
+func (h *Handler) UpdateMerchantFAQs(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+
+	var body []store.MerchantFAQ
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
+	}
+
+	// Sanitise: drop entries with blank question or answer
+	clean := body[:0]
+	for _, f := range body {
+		q := strings.TrimSpace(f.Question)
+		a := strings.TrimSpace(f.Answer)
+		if q != "" && a != "" {
+			f.Question = q
+			f.Answer = a
+			clean = append(clean, f)
+		}
+	}
+
+	if err := store.ReplaceMerchantFAQs(c.Request().Context(), h.DB, m.ID, clean); err != nil {
+		return err
+	}
+
+	// Trigger schema rebuild so FAQPage reflects the new Q&As immediately.
+	_, _ = h.River.Insert(c.Request().Context(), jobs.SchemaRebuildJobArgs{MerchantID: m.ID}, nil)
+
+	return c.JSON(http.StatusOK, clean)
+}
+
+// GetFAQSuggestions calls Claude to generate 5 neutral, policy-based FAQ suggestions.
+func (h *Handler) GetFAQSuggestions(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+
+	generator := fix.NewGenerator(h.Config.AnthropicKey)
+	suggestions, err := generator.SuggestFAQs(c.Request().Context(), m.BrandName, m.Category)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, suggestions)
 }

@@ -71,17 +71,13 @@ func BuildSchema(in SchemaInput) (string, error) {
 		brandEntity["sameAs"] = in.SocialLinks
 	}
 
-	// Organization — establishes brand identity across platforms.
-	// sameAs links AI entity recognition across Instagram, TikTok, etc.
+	// Organization — references Brand by @id; sameAs lives on Brand only to avoid duplication.
 	organization := map[string]any{
 		"@type": "Organization",
 		"@id":   orgID,
 		"name":  in.BrandName,
 		"url":   storeURL,
 		"brand": map[string]any{"@id": brandID},
-	}
-	if len(in.SocialLinks) > 0 {
-		organization["sameAs"] = in.SocialLinks
 	}
 
 	// WebSite — fully defined with SearchAction so AI assistants know the site is navigable.

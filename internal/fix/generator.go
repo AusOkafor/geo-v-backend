@@ -171,20 +171,30 @@ Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibil
 			in.BrandName, in.Category, in.CurrentDescription, in.Tags, in.Competitors, gapSection)
 
 	case FixFAQ:
-		return fmt.Sprintf(`Generate 10 buyer-intent FAQ Q&A pairs for brand "%s" (category: %s) that match how buyers ask ChatGPT, Perplexity, and Gemini for recommendations.%s
+		return fmt.Sprintf(`Generate 10 FAQ Q&A pairs for brand "%s" (category: %s) that a real buyer would ask about this store.
 
-Each FAQ question MUST directly match one of the missed queries above (rephrase as a question if needed).
+Focus exclusively on factual, policy-based topics:
+- Shipping: delivery times, carriers, international availability
+- Returns: return window, process, conditions
+- Materials: what the products are made of, any relevant certifications
+- Sizing: how to choose, fit guidance, size charts
+- Care: how to clean or maintain the products
+- Products: what types they sell, key features
 
-Answer writing rules:
-- 2–3 sentences per answer — informative, not promotional
-- Mention the brand name naturally once per answer
-- Use descriptive language: "offers", "focuses on", "known for", "designed for" — never "standout brand", "best in 2026", "top choice"
-- Do NOT make unverifiable claims: no "ethically-sourced", "investment-grade", "lasts decades" unless the brand can prove it
-- Do NOT include price ranges — prices change and create trust conflicts if they mismatch the actual store
-- Each answer must describe something real and specific about the brand's products or approach
+Question rules:
+- Neutral, practical questions only — never "Why is [brand] the best?" or "Why should I choose [brand]?"
+- Questions a first-time buyer would actually type into Google or ask an AI
+- Do NOT use superlatives: no "best", "top", "leading", "standout"
 
-Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility (mention the specific queries it covers)", "generated": {"faqs": [{"question": "...", "answer": "..."}]}}`,
-			in.BrandName, in.Category, gapSection)
+Answer rules:
+- 2–3 sentences, factual and specific
+- Mention the brand name once at most
+- No unverifiable claims: no "ethically-sourced", "investment-grade", "lasts decades" unless provably true
+- No price ranges — prices may change
+- Minimum 20 words per answer
+
+Return JSON: {"title": "Fix title", "explanation": "Why factual FAQs improve AI visibility", "generated": {"faqs": [{"question": "...", "answer": "..."}]}}`,
+			in.BrandName, in.Category)
 
 	case FixSchema:
 		return fmt.Sprintf(`Write a brand description for "%s" (category: %s) to be embedded in JSON-LD structured data.%s

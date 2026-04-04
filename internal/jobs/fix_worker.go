@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,6 +15,39 @@ import (
 	"github.com/austinokafor/geo-backend/internal/shopify"
 	"github.com/austinokafor/geo-backend/internal/store"
 )
+
+// blockedQuestionPhrases are patterns that indicate self-promotional FAQ questions.
+// AI assistants penalise schemas containing these as low-trust SEO content.
+var blockedQuestionPhrases = []string{
+	"best brand", "top brand", "leading brand", "why choose", "why should i choose",
+	"why is", "best jewelry", "top jewelry", "standout", "number one", "#1",
+}
+
+// validateFAQPairs checks generated FAQ content for patterns AI treats as low-trust.
+// Returns an error describing the first violation found.
+func validateFAQPairs(faqs []struct {
+	Question string `json:"question"`
+	Answer   string `json:"answer"`
+}, brandName string) error {
+	for i, faq := range faqs {
+		q := strings.ToLower(faq.Question)
+		for _, blocked := range blockedQuestionPhrases {
+			if strings.Contains(q, blocked) {
+				return fmt.Errorf("FAQ %d: self-promotional question pattern %q — rewrite as a neutral buyer question", i+1, blocked)
+			}
+		}
+		words := strings.Fields(faq.Answer)
+		if len(words) < 5 {
+			return fmt.Errorf("FAQ %d: answer too short (%d words, minimum 5)", i+1, len(words))
+		}
+		// Block answers that are only the brand name + filler with no substance
+		answerWithoutBrand := strings.TrimSpace(strings.ReplaceAll(strings.ToLower(faq.Answer), strings.ToLower(brandName), ""))
+		if len(strings.Fields(answerWithoutBrand)) < 3 {
+			return fmt.Errorf("FAQ %d: answer contains no substance beyond brand name", i+1)
+		}
+	}
+	return nil
+}
 
 // FixGenerationWorker creates pending_fixes from scan gaps using Claude (or mock).
 type FixGenerationWorker struct {
@@ -319,6 +353,23 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 		}
 
 	case fix.FixFAQ:
+		// Validate FAQ content before embedding in schema.
+		// Self-promotional or thin answers are flagged as low-trust by AI assistants.
+		var faqGen struct {
+			FAQs []struct {
+				Question string `json:"question"`
+				Answer   string `json:"answer"`
+			} `json:"faqs"`
+		}
+		if err := json.Unmarshal(f.Generated, &faqGen); err != nil {
+			_ = store.SetFixStatus(ctx, w.db, f.ID, "failed")
+			return fmt.Errorf("fix apply: FAQ parse: %w", err)
+		}
+		if err := validateFAQPairs(faqGen.FAQs, merchant.BrandName); err != nil {
+			slog.Warn("fix apply: FAQ validation failed — marking failed so merchant can regenerate",
+				"fix_id", f.ID, "err", err)
+			return store.SetFixStatus(ctx, w.db, f.ID, "failed")
+		}
 		// FAQ Q&A pairs are embedded into the schema as a FAQPage entity.
 		// Mark as applied and rebuild schema so the FAQPage appears in @graph immediately.
 		if err := store.SetFixStatus(ctx, w.db, f.ID, "applied"); err != nil {

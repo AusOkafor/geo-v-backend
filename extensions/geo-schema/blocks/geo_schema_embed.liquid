@@ -17,6 +17,7 @@
 {%- endif -%}
 
 {%- if template == 'product' -%}
+{%- assign variant_count = product.variants.size -%}
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -31,17 +32,79 @@
     "url": {{ shop.url | json }}
   },
   "image": [{% for image in product.images %}{% unless forloop.first %},{% endunless %}{{ image | image_url: width: 1024 | prepend: "https:" | json }}{% endfor %}],
-  "sku": {{ product.selected_or_first_available_variant.sku | default: "" | json }},
+  "sku": {{ product.selected_or_first_available_variant.sku | default: product.id | json }},
   "category": {{ product.type | default: "" | json }},
+  {%- if variant_count == 1 -%}
+  {%- assign v = product.variants.first -%}
+  "offers": {
+    "@type": "Offer",
+    "price": {{ v.price | divided_by: 100.0 }},
+    "priceCurrency": {{ cart.currency.iso_code | json }},
+    "availability": "https://schema.org/{% if v.available %}InStock{% else %}OutOfStock{% endif %}",
+    "sku": {{ v.sku | default: v.id | json }},
+    "url": {{ shop.url | append: product.url | json }}
+  }
+  {%- elsif variant_count <= 10 -%}
   "offers": {
     "@type": "AggregateOffer",
     "priceCurrency": {{ cart.currency.iso_code | json }},
     "lowPrice": {{ product.price_min | divided_by: 100.0 }},
     "highPrice": {{ product.price_max | divided_by: 100.0 }},
-    "offerCount": {{ product.variants.size }},
+    "offerCount": {{ variant_count }},
     "availability": "https://schema.org/{% if product.available %}InStock{% else %}OutOfStock{% endif %}",
     "url": {{ shop.url | append: product.url | json }}
-  }
+  },
+  "hasVariant": [
+    {%- for v in product.variants -%}
+    {%- unless forloop.first -%},{%- endunless -%}
+    {
+      "@type": "Product",
+      "@id": {{ shop.url | append: product.url | append: "?variant=" | append: v.id | json }},
+      "name": {{ product.title | append: " - " | append: v.title | json }},
+      "sku": {{ v.sku | default: v.id | json }},
+      "offers": {
+        "@type": "Offer",
+        "price": {{ v.price | divided_by: 100.0 }},
+        "priceCurrency": {{ cart.currency.iso_code | json }},
+        "availability": "https://schema.org/{% if v.available %}InStock{% else %}OutOfStock{% endif %}",
+        "url": {{ shop.url | append: product.url | append: "?variant=" | append: v.id | json }}
+      }
+      {%- if product.options.size > 0 -%}
+      ,"additionalProperty": [
+        {%- for option in product.options -%}
+        {%- unless forloop.first -%},{%- endunless -%}
+        {
+          "@type": "PropertyValue",
+          "name": {{ option.name | json }},
+          "value": {{ v.options[forloop.index0] | json }}
+        }
+        {%- endfor -%}
+      ]
+      {%- endif -%}
+    }
+    {%- endfor -%}
+  ]
+  {%- else -%}
+  "offers": {
+    "@type": "AggregateOffer",
+    "priceCurrency": {{ cart.currency.iso_code | json }},
+    "lowPrice": {{ product.price_min | divided_by: 100.0 }},
+    "highPrice": {{ product.price_max | divided_by: 100.0 }},
+    "offerCount": {{ variant_count }},
+    "availability": "https://schema.org/{% if product.available %}InStock{% else %}OutOfStock{% endif %}",
+    "url": {{ shop.url | append: product.url | json }}
+  },
+  "additionalProperty": [
+    {%- for option in product.options -%}
+    {%- unless forloop.first -%},{%- endunless -%}
+    {
+      "@type": "PropertyValue",
+      "name": {{ option.name | json }},
+      "value": {{ option.values | join: ", " | json }}
+    }
+    {%- endfor -%}
+  ]
+  {%- endif -%}
 }
 </script>
 {%- endif -%}

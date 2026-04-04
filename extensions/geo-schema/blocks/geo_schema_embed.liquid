@@ -75,7 +75,7 @@
         {%- unless forloop.first -%},{%- endunless -%}
         {
           "@type": "PropertyValue",
-          "name": {{ option.name | json }},
+          "name": {{ option | json }},
           "value": {{ v.options[forloop.index0] | json }}
         }
         {%- endfor -%}
@@ -95,7 +95,7 @@
     "url": {{ shop.url | append: product.url | json }}
   },
   "additionalProperty": [
-    {%- for option in product.options -%}
+    {%- for option in product.options_with_values -%}
     {%- unless forloop.first -%},{%- endunless -%}
     {
       "@type": "PropertyValue",

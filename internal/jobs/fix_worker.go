@@ -289,11 +289,12 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 		schemaProducts := make([]fix.SchemaProduct, 0, len(shopifyProducts))
 		for _, p := range shopifyProducts {
 			schemaProducts = append(schemaProducts, fix.SchemaProduct{
-				Handle:   p.Handle,
-				Title:    p.Title,
-				MinPrice: p.MinPrice,
-				Currency: p.Currency,
-				ImageURL: p.ImageURL,
+				Handle:      p.Handle,
+				Title:       p.Title,
+				Description: p.Description,
+				MinPrice:    p.MinPrice,
+				Currency:    p.Currency,
+				ImageURL:    p.ImageURL,
 			})
 		}
 

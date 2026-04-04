@@ -11,11 +11,12 @@ import (
 // SchemaProduct holds the real product data needed for JSON-LD generation.
 // Populated from Shopify API — never AI-generated.
 type SchemaProduct struct {
-	Handle   string
-	Title    string
-	MinPrice string
-	Currency string
-	ImageURL string
+	Handle      string
+	Title       string
+	Description string
+	MinPrice    string
+	Currency    string
+	ImageURL    string
 }
 
 // SchemaFAQ is a single Q&A pair for FAQPage schema.
@@ -45,6 +46,24 @@ func formatPrice(raw string) string {
 		return strconv.FormatInt(int64(f), 10)
 	}
 	return strconv.FormatFloat(f, 'f', 2, 64)
+}
+
+// excerptDescription returns the first sentence of a plain-text description,
+// capped at 160 characters, for use in ItemList product entries.
+func excerptDescription(s string) string {
+	s = strings.Join(strings.Fields(s), " ") // normalise whitespace
+	if idx := strings.IndexAny(s, ".!?"); idx >= 0 && idx < 160 {
+		return s[:idx+1]
+	}
+	if len(s) <= 160 {
+		return s
+	}
+	// Truncate at last space before 160 to avoid cutting mid-word
+	cut := s[:160]
+	if i := strings.LastIndex(cut, " "); i > 0 {
+		cut = cut[:i]
+	}
+	return cut + "…"
 }
 
 // BuildSchema produces a valid JSON-LD string using @graph with Organization +
@@ -102,6 +121,9 @@ func BuildSchema(in SchemaInput) (string, error) {
 			"name":  p.Title,
 			"url":   productURL,
 			"brand": map[string]any{"@id": brandID},
+		}
+		if p.Description != "" {
+			product["description"] = excerptDescription(p.Description)
 		}
 		if p.ImageURL != "" {
 			product["image"] = p.ImageURL

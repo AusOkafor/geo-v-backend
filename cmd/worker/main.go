@@ -110,6 +110,7 @@ func main() {
 	river.AddWorker(workers, jobs.NewDailyScanScheduler(pool, riverClient))
 	river.AddWorker(workers, jobs.NewWeeklyFixScheduler(pool, riverClient))
 	river.AddWorker(workers, jobs.NewFixApplyWorker(pool, encKey, riverClient))
+	river.AddWorker(workers, jobs.NewValidationWorker(pool))
 
 	if err := riverClient.Start(ctx); err != nil {
 		slog.Error("river start failed", "err", err)

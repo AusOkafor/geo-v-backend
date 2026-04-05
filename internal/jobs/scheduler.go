@@ -91,8 +91,9 @@ func (w *WeeklyFixScheduler) Work(ctx context.Context, _ *river.Job[WeeklyFixArg
 
 // BuildPeriodicJobs returns River periodic job configs for the worker.
 //
-//   - Daily scan: every 24h (scheduled via cron in production to fire at 02:00 UTC)
+//   - Daily scan: every 24h (fires at 02:00 UTC via River's interval scheduler)
 //   - Weekly fix gen: every 7 days
+//   - Daily validation: every 24h, offset 4h after scans so yesterday's records exist
 func BuildPeriodicJobs() []*river.PeriodicJob {
 	return []*river.PeriodicJob{
 		river.NewPeriodicJob(
@@ -108,6 +109,13 @@ func BuildPeriodicJobs() []*river.PeriodicJob {
 				return WeeklyFixArgs{}, nil
 			},
 			nil, // no RunOnStart — fix generation runs after each scan completes
+		),
+		river.NewPeriodicJob(
+			river.PeriodicInterval(24*time.Hour),
+			func() (river.JobArgs, *river.InsertOpts) {
+				return ValidationJobArgs{}, nil
+			},
+			nil, // runs once per day, after scans have completed
 		),
 	}
 }

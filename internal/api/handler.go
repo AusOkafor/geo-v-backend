@@ -63,6 +63,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	api.GET("/scans/status", h.GetScanStatus)
 	api.POST("/scans", h.TriggerScan)
 	api.POST("/sync", h.TriggerSync)
+	api.GET("/verify-response", h.VerifyResponseIntegrity)
 
 	// Internal admin routes — require ADMIN_API_KEY bearer token, never exposed to merchants
 	admin := e.Group("/admin", adminAuth(h.Config))

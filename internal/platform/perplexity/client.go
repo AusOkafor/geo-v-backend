@@ -137,6 +137,7 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	result.Duration = time.Since(start)
 	result.RawResponse = raw
 	result.Grounded = true // Perplexity sonar = real-time web search grounded
+	result.ModelVersion = model
 	return result, nil
 }
 

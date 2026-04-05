@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -9,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/austinokafor/geo-backend/internal/scoring"
 )
+
+// computeIntegrity re-hashes text and returns (storedHash, integrityValid).
+// storedHash comes from the citation_records row; text is the ai_response on the spot check.
+func computeIntegrity(storedHash *string, text string) (string, bool) {
+	if storedHash == nil || *storedHash == "" {
+		return "", false
+	}
+	h := sha256.Sum256([]byte(text))
+	computed := hex.EncodeToString(h[:])
+	return *storedHash, computed == *storedHash
+}
 
 // SpotCheck is a manual verification record for a single citation_record.
 type SpotCheck struct {
@@ -31,6 +44,12 @@ type SpotCheck struct {
 	VerifiedByEmail   *string    `json:"verified_by_email"`
 	VerifiedAt        *time.Time `json:"verified_at"`
 	CreatedAt         time.Time  `json:"created_at"`
+	// Integrity fields — sourced from the originating citation_record.
+	// ResponseHash is the SHA256 of AIResponse at capture time. The admin UI
+	// recomputes it and sets IntegrityValid = (hash == ResponseHash).
+	ResponseHash  string  `json:"response_hash"`
+	ModelVersion  string  `json:"model_version"`
+	IntegrityValid bool   `json:"integrity_valid"`
 }
 
 // AccuracyMetric is a daily rolled-up accuracy record per merchant+platform.
@@ -48,16 +67,18 @@ type AccuracyMetric struct {
 // Returns error if the citation_record doesn't belong to merchantID or has no answer_text.
 func CreateSpotCheck(ctx context.Context, db *pgxpool.Pool, merchantID, citationRecordID int64) (*SpotCheck, error) {
 	var (
-		query       string
-		platform    string
-		answerText  *string
-		competJSON  []byte
+		query        string
+		platform     string
+		answerText   *string
+		competJSON   []byte
+		responseHash *string
+		modelVersion *string
 	)
 	err := db.QueryRow(ctx, `
-		SELECT query, platform, answer_text, competitors
+		SELECT query, platform, answer_text, competitors, response_hash, model_version
 		FROM citation_records
 		WHERE id = $1 AND merchant_id = $2
-	`, citationRecordID, merchantID).Scan(&query, &platform, &answerText, &competJSON)
+	`, citationRecordID, merchantID).Scan(&query, &platform, &answerText, &competJSON, &responseHash, &modelVersion)
 	if err != nil {
 		return nil, fmt.Errorf("store: CreateSpotCheck: citation record not found: %w", err)
 	}
@@ -105,6 +126,11 @@ func CreateSpotCheck(ctx context.Context, db *pgxpool.Pool, merchantID, citation
 		)
 	if err != nil {
 		return nil, fmt.Errorf("store: CreateSpotCheck: insert: %w", err)
+	}
+
+	sc.ResponseHash, sc.IntegrityValid = computeIntegrity(responseHash, sc.AIResponse)
+	if modelVersion != nil {
+		sc.ModelVersion = *modelVersion
 	}
 	return &sc, nil
 }
@@ -166,6 +192,16 @@ func VerifySpotCheck(ctx context.Context, db *pgxpool.Pool, id int64, manualBran
 		fmt.Printf("store: VerifySpotCheck: rollup warn: %v\n", rollupErr)
 	}
 
+	// Fetch integrity fields from citation_records.
+	var rh, mv *string
+	_ = db.QueryRow(ctx,
+		`SELECT response_hash, model_version FROM citation_records WHERE id = $1`,
+		sc.CitationRecordID).Scan(&rh, &mv)
+	sc.ResponseHash, sc.IntegrityValid = computeIntegrity(rh, sc.AIResponse)
+	if mv != nil {
+		sc.ModelVersion = *mv
+	}
+
 	return &sc, nil
 }
 
@@ -196,19 +232,45 @@ func RollupAccuracyForMerchant(ctx context.Context, db *pgxpool.Pool, merchantID
 	return err
 }
 
+const spotCheckSelect = `
+	SELECT sc.id, sc.citation_record_id, sc.merchant_id, sc.query_text, sc.platform,
+		sc.ai_response, sc.manual_brands, sc.detected_brands,
+		sc.precision_score, sc.recall_score, sc.f1_score,
+		sc.true_positives, sc.false_positives, sc.false_negatives,
+		sc.status, sc.verified_by_type, sc.verified_by_email, sc.verified_at, sc.created_at,
+		cr.response_hash, cr.model_version
+	FROM spot_checks sc
+	LEFT JOIN citation_records cr ON cr.id = sc.citation_record_id`
+
+func scanSpotCheck(row interface {
+	Scan(...any) error
+}) (SpotCheck, error) {
+	var sc SpotCheck
+	var responseHash *string
+	var modelVersion *string
+	if err := row.Scan(
+		&sc.ID, &sc.CitationRecordID, &sc.MerchantID,
+		&sc.QueryText, &sc.Platform, &sc.AIResponse,
+		&sc.ManualBrands, &sc.DetectedBrands,
+		&sc.Precision, &sc.Recall, &sc.F1Score,
+		&sc.TruePositives, &sc.FalsePositives, &sc.FalseNegatives,
+		&sc.Status, &sc.VerifiedByType, &sc.VerifiedByEmail, &sc.VerifiedAt, &sc.CreatedAt,
+		&responseHash, &modelVersion,
+	); err != nil {
+		return sc, err
+	}
+	sc.ResponseHash, sc.IntegrityValid = computeIntegrity(responseHash, sc.AIResponse)
+	if modelVersion != nil {
+		sc.ModelVersion = *modelVersion
+	}
+	return sc, nil
+}
+
 // GetSpotChecks returns the most recent spot checks for a merchant.
 func GetSpotChecks(ctx context.Context, db *pgxpool.Pool, merchantID int64, limit int) ([]SpotCheck, error) {
-	rows, err := db.Query(ctx, `
-		SELECT id, citation_record_id, merchant_id, query_text, platform,
-			ai_response, manual_brands, detected_brands,
-			precision_score, recall_score, f1_score,
-			true_positives, false_positives, false_negatives,
-			status, verified_by_type, verified_by_email, verified_at, created_at
-		FROM spot_checks
-		WHERE merchant_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2
-	`, merchantID, limit)
+	rows, err := db.Query(ctx,
+		spotCheckSelect+` WHERE sc.merchant_id = $1 ORDER BY sc.created_at DESC LIMIT $2`,
+		merchantID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: GetSpotChecks: %w", err)
 	}
@@ -216,15 +278,8 @@ func GetSpotChecks(ctx context.Context, db *pgxpool.Pool, merchantID int64, limi
 
 	var out []SpotCheck
 	for rows.Next() {
-		var sc SpotCheck
-		if err := rows.Scan(
-			&sc.ID, &sc.CitationRecordID, &sc.MerchantID,
-			&sc.QueryText, &sc.Platform, &sc.AIResponse,
-			&sc.ManualBrands, &sc.DetectedBrands,
-			&sc.Precision, &sc.Recall, &sc.F1Score,
-			&sc.TruePositives, &sc.FalsePositives, &sc.FalseNegatives,
-			&sc.Status, &sc.VerifiedByType, &sc.VerifiedByEmail, &sc.VerifiedAt, &sc.CreatedAt,
-		); err != nil {
+		sc, err := scanSpotCheck(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, sc)
@@ -234,22 +289,9 @@ func GetSpotChecks(ctx context.Context, db *pgxpool.Pool, merchantID int64, limi
 
 // GetSpotCheckByID fetches a single spot check, scoped to the merchant.
 func GetSpotCheckByID(ctx context.Context, db *pgxpool.Pool, id, merchantID int64) (*SpotCheck, error) {
-	var sc SpotCheck
-	err := db.QueryRow(ctx, `
-		SELECT id, citation_record_id, merchant_id, query_text, platform,
-			ai_response, manual_brands, detected_brands,
-			precision_score, recall_score, f1_score,
-			true_positives, false_positives, false_negatives,
-			status, verified_by_type, verified_by_email, verified_at, created_at
-		FROM spot_checks WHERE id=$1 AND merchant_id=$2
-	`, id, merchantID).Scan(
-		&sc.ID, &sc.CitationRecordID, &sc.MerchantID,
-		&sc.QueryText, &sc.Platform, &sc.AIResponse,
-		&sc.ManualBrands, &sc.DetectedBrands,
-		&sc.Precision, &sc.Recall, &sc.F1Score,
-		&sc.TruePositives, &sc.FalsePositives, &sc.FalseNegatives,
-		&sc.Status, &sc.VerifiedByType, &sc.VerifiedByEmail, &sc.VerifiedAt, &sc.CreatedAt,
-	)
+	sc, err := scanSpotCheck(db.QueryRow(ctx,
+		spotCheckSelect+` WHERE sc.id=$1 AND sc.merchant_id=$2`,
+		id, merchantID))
 	if err != nil {
 		return nil, fmt.Errorf("store: GetSpotCheckByID: %w", err)
 	}

@@ -26,6 +26,10 @@ type CitationResult struct {
 	// (OpenAI Responses API with web_search_preview, Perplexity sonar).
 	// False means model-memory only (Together.ai, ungrounded chat completions).
 	Grounded bool
+	// ModelVersion is the specific model identifier returned by or configured for
+	// this platform (e.g. "gpt-4o-mini", "sonar", "gemini-2.5-flash").
+	// Stored alongside the response so auditors can reproduce the exact model state.
+	ModelVersion string
 }
 
 // Competitor is a brand cited instead of (or alongside) the merchant.

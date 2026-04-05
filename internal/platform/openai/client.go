@@ -139,6 +139,7 @@ func (c *Client) Query(ctx context.Context, brandName, prompt string) (platform.
 	result.Duration = time.Since(start)
 	result.RawResponse = raw
 	result.Grounded = false // model memory, not web search
+	result.ModelVersion = model
 	return result, nil
 }
 

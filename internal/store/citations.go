@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -22,10 +24,19 @@ func InsertCitationRecord(ctx context.Context, db *pgxpool.Pool, merchantID int6
 		return err
 	}
 
+	// SHA256 fingerprint of the raw answer text — proves the stored response
+	// hasn't been tampered with since capture time.
+	h := sha256.Sum256([]byte(r.AnswerText))
+	responseHash := hex.EncodeToString(h[:])
+
+	durationMs := int(r.Duration.Milliseconds())
+
 	_, err = db.Exec(ctx, `
 		INSERT INTO citation_records
-			(merchant_id, platform, query, query_type, mentioned, position, sentiment, competitors, tokens_used, cost_usd, grounded, answer_text)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			(merchant_id, platform, query, query_type, mentioned, position, sentiment,
+			 competitors, tokens_used, cost_usd, grounded, answer_text,
+			 response_hash, model_version, scan_duration_ms)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`,
 		merchantID,
 		r.Platform,
@@ -39,6 +50,9 @@ func InsertCitationRecord(ctx context.Context, db *pgxpool.Pool, merchantID int6
 		r.CostUSD,
 		r.Grounded,
 		r.AnswerText,
+		responseHash,
+		r.ModelVersion,
+		durationMs,
 	)
 	return err
 }

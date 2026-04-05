@@ -69,14 +69,15 @@ func (w *ValidationWorker) Work(ctx context.Context, _ *river.Job[ValidationJobA
 		profileByID[m.ID] = m
 	}
 
-	// Per-platform metric aggregation across all merchants
+	// Per-merchant per-platform metric aggregation
 	type platformAgg struct {
 		totalPrecision float64
 		totalRecall    float64
 		totalF1        float64
 		count          int
 	}
-	platformMetrics := make(map[string]*platformAgg)
+	// merchantPlatformMetrics[merchantID][platform]
+	merchantPlatformMetrics := make(map[int64]map[string]*platformAgg)
 	alertsTriggered := 0
 
 	for merchantID, samples := range byMerchant {
@@ -105,17 +106,16 @@ func (w *ValidationWorker) Work(ctx context.Context, _ *river.Job[ValidationJobA
 				continue
 			}
 
-			// Re-detect brands from stored answer text
 			redetected := detector.BrandNames(s.AnswerText)
-
-			// Ground truth = stored competitor list (what the AI client parsed at scan time)
 			m := scoring.Calculate(s.Competitors, redetected)
 
-			// Accumulate per-platform
-			if _, ok := platformMetrics[s.Platform]; !ok {
-				platformMetrics[s.Platform] = &platformAgg{}
+			if merchantPlatformMetrics[merchantID] == nil {
+				merchantPlatformMetrics[merchantID] = make(map[string]*platformAgg)
 			}
-			agg := platformMetrics[s.Platform]
+			if merchantPlatformMetrics[merchantID][s.Platform] == nil {
+				merchantPlatformMetrics[merchantID][s.Platform] = &platformAgg{}
+			}
+			agg := merchantPlatformMetrics[merchantID][s.Platform]
 			agg.totalPrecision += m.Precision
 			agg.totalRecall += m.Recall
 			agg.totalF1 += m.F1
@@ -132,11 +132,43 @@ func (w *ValidationWorker) Work(ctx context.Context, _ *river.Job[ValidationJobA
 		}
 	}
 
-	// Write per-merchant-platform accuracy metrics and fire alerts
+	// Write per-merchant per-platform accuracy metrics and fire alerts
+	// Also accumulate a system-wide aggregate (merchant_id=0) for monitoring.
+	systemByPlatform := make(map[string]*platformAgg)
 	var overallPrecision, overallRecall, overallF1 float64
 	var overallCount int
 
-	for platform, agg := range platformMetrics {
+	for merchantID, platforms := range merchantPlatformMetrics {
+		for platform, agg := range platforms {
+			if agg.count == 0 {
+				continue
+			}
+
+			avgMetrics := scoring.Metrics{
+				Precision: agg.totalPrecision / float64(agg.count),
+				Recall:    agg.totalRecall / float64(agg.count),
+				F1:        agg.totalF1 / float64(agg.count),
+			}
+
+			// Write per-merchant metric — this is what the admin UI queries.
+			if err := store.UpsertAccuracyMetrics(ctx, w.db, merchantID, runDate, platform, avgMetrics, agg.count); err != nil {
+				slog.Warn("validation: failed to write merchant accuracy metrics",
+					"merchant_id", merchantID, "platform", platform, "err", err)
+			}
+
+			// Accumulate into system-wide aggregate.
+			if systemByPlatform[platform] == nil {
+				systemByPlatform[platform] = &platformAgg{}
+			}
+			systemByPlatform[platform].totalPrecision += agg.totalPrecision
+			systemByPlatform[platform].totalRecall += agg.totalRecall
+			systemByPlatform[platform].totalF1 += agg.totalF1
+			systemByPlatform[platform].count += agg.count
+		}
+	}
+
+	// Write system-wide aggregate (merchant_id=0) and fire threshold alerts.
+	for platform, agg := range systemByPlatform {
 		if agg.count == 0 {
 			continue
 		}
@@ -147,9 +179,8 @@ func (w *ValidationWorker) Work(ctx context.Context, _ *river.Job[ValidationJobA
 			F1:        agg.totalF1 / float64(agg.count),
 		}
 
-		// Write to accuracy_metrics — use merchant_id=0 for the system-wide aggregate
 		if err := store.UpsertAccuracyMetrics(ctx, w.db, 0, runDate, platform, avgMetrics, agg.count); err != nil {
-			slog.Warn("validation: failed to write accuracy metrics",
+			slog.Warn("validation: failed to write system accuracy metrics",
 				"platform", platform, "err", err)
 		}
 

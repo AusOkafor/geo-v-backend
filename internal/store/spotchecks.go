@@ -157,7 +157,43 @@ func VerifySpotCheck(ctx context.Context, db *pgxpool.Pool, id int64, manualBran
 	if err != nil {
 		return nil, fmt.Errorf("store: VerifySpotCheck: update: %w", err)
 	}
+
+	// Immediately roll up accuracy metrics for this merchant+platform so the
+	// admin dashboard reflects the verification without waiting for the nightly job.
+	today := now.UTC().Format("2006-01-02")
+	if rollupErr := RollupAccuracyForMerchant(ctx, db, sc.MerchantID, sc.Platform, today); rollupErr != nil {
+		// Non-fatal: the spot check is saved; metrics will sync on next nightly run.
+		fmt.Printf("store: VerifySpotCheck: rollup warn: %v\n", rollupErr)
+	}
+
 	return &sc, nil
+}
+
+// RollupAccuracyForMerchant recomputes and upserts the accuracy metric for a
+// specific merchant+platform+date from all verified spot checks in the DB.
+// Called immediately after manual verification so the admin dashboard is live.
+func RollupAccuracyForMerchant(ctx context.Context, db *pgxpool.Pool, merchantID int64, platform, date string) error {
+	_, err := db.Exec(ctx, `
+		INSERT INTO accuracy_metrics (merchant_id, date, platform, avg_precision, avg_recall, avg_f1, sample_size)
+		SELECT
+			$1, $2, platform,
+			AVG(precision_score),
+			AVG(recall_score),
+			AVG(f1_score),
+			COUNT(*)
+		FROM spot_checks
+		WHERE merchant_id = $1
+		  AND platform    = $3
+		  AND status      = 'verified'
+		  AND precision_score IS NOT NULL
+		GROUP BY platform
+		ON CONFLICT (merchant_id, date, platform) DO UPDATE SET
+			avg_precision = EXCLUDED.avg_precision,
+			avg_recall    = EXCLUDED.avg_recall,
+			avg_f1        = EXCLUDED.avg_f1,
+			sample_size   = EXCLUDED.sample_size
+	`, merchantID, date, platform)
+	return err
 }
 
 // GetSpotChecks returns the most recent spot checks for a merchant.

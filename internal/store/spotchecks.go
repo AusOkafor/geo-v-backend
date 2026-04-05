@@ -98,7 +98,7 @@ func CreateSpotCheck(ctx context.Context, db *pgxpool.Pool, merchantID, citation
 		Scan(
 			&sc.ID, &sc.CitationRecordID, &sc.MerchantID,
 			&sc.QueryText, &sc.Platform, &sc.AIResponse,
-			(*stringSlice)(&sc.ManualBrands), (*stringSlice)(&sc.DetectedBrands),
+			&sc.ManualBrands, &sc.DetectedBrands,
 			&sc.Precision, &sc.Recall, &sc.F1Score,
 			&sc.TruePositives, &sc.FalsePositives, &sc.FalseNegatives,
 			&sc.Status, &sc.VerifiedByType, &sc.VerifiedByEmail, &sc.VerifiedAt, &sc.CreatedAt,
@@ -115,7 +115,7 @@ func VerifySpotCheck(ctx context.Context, db *pgxpool.Pool, id int64, manualBran
 	// Fetch detected brands to compute metrics
 	var detectedBrands []string
 	err := db.QueryRow(ctx, `SELECT detected_brands FROM spot_checks WHERE id=$1`, id).
-		Scan((*stringSlice)(&detectedBrands))
+		Scan(&detectedBrands)
 	if err != nil {
 		return nil, fmt.Errorf("store: VerifySpotCheck: fetch: %w", err)
 	}
@@ -149,7 +149,7 @@ func VerifySpotCheck(ctx context.Context, db *pgxpool.Pool, id int64, manualBran
 		Scan(
 			&sc.ID, &sc.CitationRecordID, &sc.MerchantID,
 			&sc.QueryText, &sc.Platform, &sc.AIResponse,
-			(*stringSlice)(&sc.ManualBrands), (*stringSlice)(&sc.DetectedBrands),
+			&sc.ManualBrands, &sc.DetectedBrands,
 			&sc.Precision, &sc.Recall, &sc.F1Score,
 			&sc.TruePositives, &sc.FalsePositives, &sc.FalseNegatives,
 			&sc.Status, &sc.VerifiedByType, &sc.VerifiedByEmail, &sc.VerifiedAt, &sc.CreatedAt,
@@ -184,7 +184,7 @@ func GetSpotChecks(ctx context.Context, db *pgxpool.Pool, merchantID int64, limi
 		if err := rows.Scan(
 			&sc.ID, &sc.CitationRecordID, &sc.MerchantID,
 			&sc.QueryText, &sc.Platform, &sc.AIResponse,
-			(*stringSlice)(&sc.ManualBrands), (*stringSlice)(&sc.DetectedBrands),
+			&sc.ManualBrands, &sc.DetectedBrands,
 			&sc.Precision, &sc.Recall, &sc.F1Score,
 			&sc.TruePositives, &sc.FalsePositives, &sc.FalseNegatives,
 			&sc.Status, &sc.VerifiedByType, &sc.VerifiedByEmail, &sc.VerifiedAt, &sc.CreatedAt,
@@ -209,7 +209,7 @@ func GetSpotCheckByID(ctx context.Context, db *pgxpool.Pool, id, merchantID int6
 	`, id, merchantID).Scan(
 		&sc.ID, &sc.CitationRecordID, &sc.MerchantID,
 		&sc.QueryText, &sc.Platform, &sc.AIResponse,
-		(*stringSlice)(&sc.ManualBrands), (*stringSlice)(&sc.DetectedBrands),
+		&sc.ManualBrands, &sc.DetectedBrands,
 		&sc.Precision, &sc.Recall, &sc.F1Score,
 		&sc.TruePositives, &sc.FalsePositives, &sc.FalseNegatives,
 		&sc.Status, &sc.VerifiedByType, &sc.VerifiedByEmail, &sc.VerifiedAt, &sc.CreatedAt,
@@ -318,19 +318,3 @@ func SampleCitationRecords(ctx context.Context, db *pgxpool.Pool, limitPerPlatfo
 	return out, rows.Err()
 }
 
-// stringSlice is a helper to scan PostgreSQL TEXT[] into []string.
-type stringSlice []string
-
-func (s *stringSlice) Scan(src any) error {
-	if src == nil {
-		*s = nil
-		return nil
-	}
-	switch v := src.(type) {
-	case []byte:
-		return json.Unmarshal(v, s)
-	case string:
-		return json.Unmarshal([]byte(v), s)
-	}
-	return fmt.Errorf("stringSlice: unsupported type %T", src)
-}

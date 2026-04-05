@@ -17,6 +17,11 @@ import (
 	"github.com/austinokafor/geo-backend/internal/api"
 	"github.com/austinokafor/geo-backend/internal/config"
 	"github.com/austinokafor/geo-backend/internal/db"
+	"github.com/austinokafor/geo-backend/internal/platform"
+	"github.com/austinokafor/geo-backend/internal/platform/gemini"
+	"github.com/austinokafor/geo-backend/internal/platform/openai"
+	"github.com/austinokafor/geo-backend/internal/platform/perplexity"
+	"github.com/austinokafor/geo-backend/internal/verification"
 )
 
 func main() {
@@ -102,10 +107,23 @@ func main() {
 		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 	}))
 
+	// Platform clients for Citation Verifier (admin tool only — not used in scan workers).
+	// In MockAI mode the Verifier is still created but with zero clients (safe no-op).
+	var aiClients []platform.AIClient
+	if !cfg.MockAI {
+		aiClients = []platform.AIClient{
+			openai.New(cfg.OpenAIKey),
+			perplexity.New(cfg.PerplexityKey),
+			gemini.New(cfg.GeminiKey),
+		}
+	}
+	verifier := verification.New(aiClients, pool)
+
 	h := &api.Handler{
-		DB:     pool,
-		River:  riverClient,
-		Config: cfg,
+		DB:       pool,
+		River:    riverClient,
+		Config:   cfg,
+		Verifier: verifier,
 	}
 	h.RegisterRoutes(e)
 

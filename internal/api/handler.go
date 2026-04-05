@@ -6,13 +6,15 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/riverqueue/river"
 	"github.com/austinokafor/geo-backend/internal/config"
+	"github.com/austinokafor/geo-backend/internal/verification"
 )
 
 // Handler holds all dependencies for HTTP handlers.
 type Handler struct {
-	DB          *pgxpool.Pool
-	River       *river.Client[pgx.Tx]
-	Config      *config.Config
+	DB       *pgxpool.Pool
+	River    *river.Client[pgx.Tx]
+	Config   *config.Config
+	Verifier *verification.Verifier
 }
 
 // RegisterRoutes registers all API routes on the Echo instance.
@@ -71,4 +73,11 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	admin.GET("/spot-checks", h.AdminListSpotChecks)
 	admin.PUT("/spot-checks/:id/verify", h.AdminVerifySpotCheck)
 	admin.GET("/spot-checks/accuracy", h.AdminGetAccuracy)
+
+	// Citation Verifier — re-query AI platforms, detect hallucinations, track drift.
+	// These make live AI calls; the 90s timeout is applied per-handler (not here).
+	admin.POST("/verifier/citations/:id", h.AdminVerifyCitation)
+	admin.POST("/verifier/cross-platform", h.AdminCrossPlatform)
+	admin.GET("/verifier/history", h.AdminListVerifications)
+	admin.GET("/verifier/stability", h.AdminGetStability)
 }

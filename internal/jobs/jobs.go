@@ -94,6 +94,20 @@ func (SchemaRebuildJobArgs) InsertOpts() river.InsertOpts {
 	}
 }
 
+// ─── ValidationJobArgs ───────────────────────────────────────────────────────
+
+// ValidationJobArgs runs a daily accuracy validation pass over yesterday's scans.
+type ValidationJobArgs struct{}
+
+func (ValidationJobArgs) Kind() string { return "validation" }
+
+func (ValidationJobArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		Queue:       "scans",
+		MaxAttempts: 2,
+	}
+}
+
 // ─── DataDeletionJobArgs ──────────────────────────────────────────────────────
 
 // DataDeletionJobArgs deletes all data for a store on GDPR uninstall.

@@ -35,6 +35,9 @@ type Config struct {
 	StripeSecretKey      string
 	StripeWebhookSecret  string
 
+	// Admin
+	AdminAPIKey string // bearer token for internal admin endpoints (ADMIN_API_KEY env var)
+
 	// App
 	Port            string
 	Environment     string
@@ -75,6 +78,7 @@ func Load() (*Config, error) {
 		ShopifyAppHandle: envOrDefault("SHOPIFY_APP_HANDLE", "geo-visibility"),
 		SentryDSN:        os.Getenv("SENTRY_DSN"),
 		MockAI:           os.Getenv("MOCK_AI") == "true",
+		AdminAPIKey:      os.Getenv("ADMIN_API_KEY"),
 
 		// Optional billing
 		StripeSecretKey:     os.Getenv("STRIPE_SECRET_KEY"),

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/austinokafor/geo-backend/internal/platform"
@@ -252,10 +253,21 @@ func (v *Verifier) checkHallucinations(ctx context.Context, brands []string) ([]
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (v *Verifier) storeVerification(ctx context.Context, r *VerificationResult) (int64, error) {
-	hallJSON, _ := json.Marshal(r.Hallucinations)
+	// Ensure nil slice marshals to "[]" not "null" — pgx v5 passes []byte as bytea,
+	// so we marshal to string so PostgreSQL receives valid JSONB text.
+	flags := r.Hallucinations
+	if flags == nil {
+		flags = []HallucinationFlag{}
+	}
+	hallJSON, _ := json.Marshal(flags)
+
+	// Use a fresh context for the DB write so a slow AI call can't expire the
+	// context before persistence completes.
+	dbCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	var id int64
-	err := v.db.QueryRow(ctx, `
+	err := v.db.QueryRow(dbCtx, `
 		INSERT INTO citation_verifications (
 			citation_record_id, merchant_id,
 			original_query, original_platform, original_response,
@@ -268,14 +280,16 @@ func (v *Verifier) storeVerification(ctx context.Context, r *VerificationResult)
 		r.CitationRecordID, r.MerchantID,
 		r.Query, r.Platform, r.OriginalResponse,
 		r.ReQueryResponse, r.SimilarityScore, r.ResponseChanged,
-		hallJSON, r.HallucinationCount,
+		string(hallJSON), r.HallucinationCount,
 		r.IsAuthentic,
 	).Scan(&id)
 	return id, err
 }
 
-func (v *Verifier) upsertStability(ctx context.Context, merchantID int64, query, plt string, sim float64) error {
-	_, err := v.db.Exec(ctx, `
+func (v *Verifier) upsertStability(_ context.Context, merchantID int64, query, plt string, sim float64) error {
+	dbCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, err := v.db.Exec(dbCtx, `
 		INSERT INTO response_stability
 			(merchant_id, query_text, platform, avg_similarity, min_similarity, check_count, last_checked_at, drift_detected)
 		VALUES ($1, $2, $3, $4, $4, 1, NOW(), $4 < 0.75)

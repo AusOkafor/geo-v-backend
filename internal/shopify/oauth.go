@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const oauthScopes = "read_products,write_products,read_content"
+const oauthScopes = "read_products,write_products,read_content,read_metafields,write_metafields"
 
 // BuildAuthURL constructs the Shopify OAuth authorization URL.
 func BuildAuthURL(shop, clientID, redirectURI, state string) string {

@@ -68,15 +68,17 @@ func (h *Handler) AdminDebugProductMetafields(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not decrypt token")
 	}
 
-	entries, err := shopify.FetchAllProductMetafields(c.Request().Context(), merchant.ShopDomain, token, 3)
+	result, err := shopify.FetchAllProductMetafields(c.Request().Context(), merchant.ShopDomain, token, 3)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 	return c.JSON(http.StatusOK, map[string]any{
-		"merchant_id": merchantID,
-		"shop_domain": merchant.ShopDomain,
-		"metafields":  entries,
-		"count":       len(entries),
+		"merchant_id":    merchantID,
+		"shop_domain":    merchant.ShopDomain,
+		"products_found": len(result.Products),
+		"products":       result.Products,
+		"metafields":     result.Metafields,
+		"count":          len(result.Metafields),
 	})
 }
 

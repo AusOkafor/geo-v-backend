@@ -16,9 +16,22 @@ type ProductMetafieldEntry struct {
 	Value        string `json:"value"`
 }
 
+// DebugProductsResult holds products found and their metafields.
+type DebugProductsResult struct {
+	Products  []DebugProduct        `json:"products"`
+	Metafields []ProductMetafieldEntry `json:"metafields"`
+}
+
+// DebugProduct is a product summary for debug output.
+type DebugProduct struct {
+	GID           string `json:"gid"`
+	Title         string `json:"title"`
+	MetafieldCount int   `json:"metafield_count"`
+}
+
 // FetchAllProductMetafields returns every metafield on the first `limit` products.
 // Used by the admin debug endpoint to identify unknown review app namespaces.
-func FetchAllProductMetafields(ctx context.Context, shop, token string, limit int) ([]ProductMetafieldEntry, error) {
+func FetchAllProductMetafields(ctx context.Context, shop, token string, limit int) (*DebugProductsResult, error) {
 	if limit < 1 || limit > 10 {
 		limit = 3
 	}
@@ -66,10 +79,19 @@ query AllProductMetafields($first: Int!) {
 		return nil, fmt.Errorf("shopify: FetchAllProductMetafields decode: %w", err)
 	}
 
-	var out []ProductMetafieldEntry
+	result := &DebugProductsResult{
+		Products:   make([]DebugProduct, 0, len(resp.Products.Nodes)),
+		Metafields: []ProductMetafieldEntry{},
+	}
+
 	for _, p := range resp.Products.Nodes {
+		result.Products = append(result.Products, DebugProduct{
+			GID:           p.ID,
+			Title:         p.Title,
+			MetafieldCount: len(p.Metafields.Nodes),
+		})
 		for _, mf := range p.Metafields.Nodes {
-			out = append(out, ProductMetafieldEntry{
+			result.Metafields = append(result.Metafields, ProductMetafieldEntry{
 				ProductGID:   p.ID,
 				ProductTitle: p.Title,
 				Namespace:    mf.Namespace,
@@ -79,5 +101,5 @@ query AllProductMetafields($first: Int!) {
 			})
 		}
 	}
-	return out, nil
+	return result, nil
 }

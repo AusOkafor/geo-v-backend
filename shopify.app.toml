@@ -4,7 +4,7 @@ application_url = "https://geo-visibility-eight.vercel.app/dashboard"
 embedded = false
 
 [access_scopes]
-  scopes = "read_products,write_products,read_themes,write_themes"
+  scopes = "read_products,write_products,read_themes,write_themes,read_metafields,write_metafields"
 
 [auth]
   redirect_urls = [

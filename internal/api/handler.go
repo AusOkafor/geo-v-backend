@@ -80,4 +80,9 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	admin.POST("/verifier/cross-platform", h.AdminCrossPlatform)
 	admin.GET("/verifier/history", h.AdminListVerifications)
 	admin.GET("/verifier/stability", h.AdminGetStability)
+
+	// Review Detector — detect review apps, aggregate ratings, inject aggregateRating schema.
+	admin.GET("/reviews", h.AdminListReviews)
+	admin.POST("/reviews/scan/:merchant_id", h.AdminScanMerchantReviews)
+	admin.POST("/reviews/scan-all", h.AdminScanAllReviews)
 }

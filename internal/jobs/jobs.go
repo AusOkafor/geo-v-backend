@@ -108,6 +108,24 @@ func (ValidationJobArgs) InsertOpts() river.InsertOpts {
 	}
 }
 
+// ─── ReviewScanJobArgs ────────────────────────────────────────────────────────
+
+// ReviewScanJobArgs fetches review metafields from Shopify for one merchant,
+// detects the installed review app, and saves rating/count to the merchants row.
+// If reviews are found, it enqueues a SchemaRebuildJobArgs to inject aggregateRating.
+type ReviewScanJobArgs struct {
+	MerchantID int64 `json:"merchant_id"`
+}
+
+func (ReviewScanJobArgs) Kind() string { return "review_scan" }
+
+func (ReviewScanJobArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		Queue:       "sync",
+		MaxAttempts: 3,
+	}
+}
+
 // ─── DataDeletionJobArgs ──────────────────────────────────────────────────────
 
 // DataDeletionJobArgs deletes all data for a store on GDPR uninstall.

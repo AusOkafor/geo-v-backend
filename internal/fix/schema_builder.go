@@ -33,6 +33,10 @@ type SchemaInput struct {
 	TopProducts      []SchemaProduct
 	SocialLinks      []string    // sameAs links (Instagram, TikTok, etc.) — emitted only if non-empty
 	FAQs             []SchemaFAQ // from applied FAQ fix — emitted as FAQPage if non-empty
+	// Review data — injected as aggregateRating on each Product node when present.
+	// AvgRating == 0 means no review data available; schema is emitted without it.
+	AvgRating   float64
+	ReviewCount int
 }
 
 // formatPrice converts a raw Shopify price string to a clean display value.
@@ -134,6 +138,17 @@ func BuildSchema(in SchemaInput) (string, error) {
 				"price":         formatPrice(p.MinPrice),
 				"priceCurrency": p.Currency,
 				"availability":  "https://schema.org/InStock",
+			}
+		}
+		// Inject aggregateRating from real review app data when available.
+		// AI platforms explicitly flag missing reviews — this directly addresses that signal.
+		if in.AvgRating > 0 && in.ReviewCount > 0 {
+			product["aggregateRating"] = map[string]any{
+				"@type":       "AggregateRating",
+				"ratingValue": fmt.Sprintf("%.2f", in.AvgRating),
+				"reviewCount": in.ReviewCount,
+				"bestRating":  "5",
+				"worstRating": "1",
 			}
 		}
 		items = append(items, map[string]any{

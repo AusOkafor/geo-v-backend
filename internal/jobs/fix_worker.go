@@ -485,6 +485,14 @@ func (w *SchemaRebuildWorker) Work(ctx context.Context, job *river.Job[SchemaReb
 		}
 	}
 
+	// Include review data — injects aggregateRating into each Product node when available.
+	var avgRating float64
+	var reviewCount int
+	if rs, err := store.GetMerchantReviewStatus(ctx, w.db, merchant.ID); err == nil && rs.SafeAvgRating() > 0 {
+		avgRating = rs.SafeAvgRating()
+		reviewCount = rs.TotalReviews
+	}
+
 	schemaJSON, err := fix.BuildSchema(fix.SchemaInput{
 		BrandName:        merchant.BrandName,
 		ShopDomain:       merchant.ShopDomain,
@@ -492,6 +500,8 @@ func (w *SchemaRebuildWorker) Work(ctx context.Context, job *river.Job[SchemaReb
 		TopProducts:      schemaProducts,
 		SocialLinks:      merchant.SocialLinks,
 		FAQs:             faqs,
+		AvgRating:        avgRating,
+		ReviewCount:      reviewCount,
 	})
 	if err != nil {
 		return fmt.Errorf("schema rebuild: build schema: %w", err)
@@ -509,7 +519,15 @@ func (w *SchemaRebuildWorker) Work(ctx context.Context, job *river.Job[SchemaReb
 		slog.Warn("schema rebuild: storefront access grant failed (non-fatal)", "err", err)
 	}
 
-	slog.Info("schema rebuild: complete", "merchant_id", job.Args.MerchantID)
+	// Mark schema as injected if review data was included.
+	if avgRating > 0 {
+		_ = store.SaveMerchantReviews(ctx, w.db, merchant.ID, "", avgRating, reviewCount, true)
+	}
+
+	slog.Info("schema rebuild: complete",
+		"merchant_id", job.Args.MerchantID,
+		"review_injected", avgRating > 0,
+	)
 	return nil
 }
 

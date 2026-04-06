@@ -25,7 +25,7 @@ func FetchAllProductMetafields(ctx context.Context, shop, token string, limit in
 
 	const q = `
 query AllProductMetafields($first: Int!) {
-  products(first: $first, query: "status:active") {
+  products(first: $first) {
     nodes {
       id
       title

@@ -55,7 +55,7 @@ func FetchProductReviewMetafields(ctx context.Context, shop, token string, limit
 	// All known review-app metafield namespaces/keys fetched in one query via aliases.
 	const q = `
 query ReviewMetafields($first: Int!) {
-  products(first: $first, query: "status:active") {
+  products(first: $first) {
     nodes {
       id
       title

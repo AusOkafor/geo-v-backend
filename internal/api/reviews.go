@@ -8,7 +8,9 @@ import (
 	"strconv"
 
 	"github.com/labstack/echo/v4"
+	"github.com/austinokafor/geo-backend/internal/crypto"
 	"github.com/austinokafor/geo-backend/internal/jobs"
+	"github.com/austinokafor/geo-backend/internal/shopify"
 	"github.com/austinokafor/geo-backend/internal/store"
 )
 
@@ -44,6 +46,37 @@ func (h *Handler) AdminScanMerchantReviews(c echo.Context) error {
 	return c.JSON(http.StatusAccepted, map[string]any{
 		"queued":      true,
 		"merchant_id": merchantID,
+	})
+}
+
+// AdminDebugProductMetafields returns every metafield on the first 3 products
+// for a merchant. Used to identify unknown review app namespaces/keys.
+// GET /admin/reviews/debug/:merchant_id
+func (h *Handler) AdminDebugProductMetafields(c echo.Context) error {
+	merchantID, err := strconv.ParseInt(c.Param("merchant_id"), 10, 64)
+	if err != nil || merchantID == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid merchant_id")
+	}
+
+	merchant, err := store.GetMerchant(c.Request().Context(), h.DB, merchantID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "merchant not found")
+	}
+
+	token, err := crypto.Decrypt(merchant.AccessTokenEnc, []byte(h.Config.EncryptionKey))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not decrypt token")
+	}
+
+	entries, err := shopify.FetchAllProductMetafields(c.Request().Context(), merchant.ShopDomain, token, 3)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(http.StatusOK, map[string]any{
+		"merchant_id": merchantID,
+		"shop_domain": merchant.ShopDomain,
+		"metafields":  entries,
+		"count":       len(entries),
 	})
 }
 

@@ -85,4 +85,5 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	admin.GET("/reviews", h.AdminListReviews)
 	admin.POST("/reviews/scan/:merchant_id", h.AdminScanMerchantReviews)
 	admin.POST("/reviews/scan-all", h.AdminScanAllReviews)
+	admin.GET("/reviews/debug/:merchant_id", h.AdminDebugProductMetafields)
 }

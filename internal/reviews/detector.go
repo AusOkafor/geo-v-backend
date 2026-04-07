@@ -113,40 +113,6 @@ func Detect(products []shopify.ProductReviewMetafields) MerchantReviewData {
 	return MerchantReviewData{App: AppNone}
 }
 
-// DetectAppFromInstalled identifies which review app is installed by matching
-// known app handles and titles from the store's installed apps list.
-// Returns AppNone if no known review app is found.
-func DetectAppFromInstalled(apps []shopify.InstalledApp) App {
-	// knownApps maps substrings found in handle or title to the App constant.
-	// Longer/more-specific strings are listed first to avoid false matches.
-	type matcher struct {
-		substr string
-		app    App
-	}
-	matchers := []matcher{
-		{"judge-me", AppJudgeMe},
-		{"judgeme", AppJudgeMe},
-		{"judge.me", AppJudgeMe},
-		{"yotpo", AppYotpo},
-		{"stamped", AppStamped},
-		{"loox", AppLoox},
-		{"okendo", AppOkendo},
-		{"growave", AppGrowave},
-		{"fera", AppFera},
-		{"ryviu", AppRyviu},
-	}
-
-	for _, a := range apps {
-		combined := strings.ToLower(a.Handle + " " + a.Title)
-		for _, m := range matchers {
-			if strings.Contains(combined, m.substr) {
-				return m.app
-			}
-		}
-	}
-	return AppNone
-}
-
 // ─── per-app extractors ───────────────────────────────────────────────────────
 
 func extractJudgeMe(p shopify.ProductReviewMetafields) (float64, int, bool) {

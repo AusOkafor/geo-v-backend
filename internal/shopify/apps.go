@@ -52,6 +52,10 @@ var knownReviewAppCDN = []struct {
 	{"judge.me/", "judge_me"},
 	{"judgeme_widgets", "judge_me"},
 	{"data-judgeme", "judge_me"},
+	{"jdgm-widget", "judge_me"},
+	{"jdgm-review-widget", "judge_me"},
+	{"metafields.judgeme", "judge_me"},
+	{"judgeme_product_reviews", "judge_me"},
 	{"cdn.stamped.io", "stamped"},
 	{"stamped.io/", "stamped"},
 	{"data-stamped", "stamped"},
@@ -168,12 +172,13 @@ query ThemeSnippets($themeId: ID!) {
 		}
 	}
 
-	// Step 3: read theme.liquid content — needed both to detect apps that
-	// inject inline (no snippet file) and to extract the API key.
+	// Step 3: read key template files for inline review app code.
+	// Some apps inject directly into templates/product.liquid or layout/theme.liquid
+	// rather than adding separate snippet files.
 	const contentQ = `
-query ThemeLiquidContent($themeId: ID!) {
+query TemplateLiquidContent($themeId: ID!) {
   theme(id: $themeId) {
-    files(filenames: ["layout/theme.liquid"], first: 1) {
+    files(filenames: ["layout/theme.liquid", "templates/product.liquid", "sections/main-product.liquid", "sections/product-template.liquid"], first: 10) {
       nodes {
         filename
         body {
@@ -204,7 +209,13 @@ query ThemeLiquidContent($themeId: ID!) {
 		return result, nil
 	}
 
-	content := contentResp.Theme.Files.Nodes[0].Body.Content
+	// Concatenate all file contents for a single scan pass.
+	var combined strings.Builder
+	for _, node := range contentResp.Theme.Files.Nodes {
+		combined.WriteString(node.Body.Content)
+		combined.WriteString("\n")
+	}
+	content := combined.String()
 	contentLower := strings.ToLower(content)
 
 	// If snippet scan didn't find an app, scan content for CDN/widget patterns.

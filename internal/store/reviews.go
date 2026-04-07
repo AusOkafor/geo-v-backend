@@ -42,11 +42,13 @@ func (s *MerchantReviewStatus) ReviewAppLabel() string {
 
 // SaveMerchantReviews upserts review fields on the merchants row.
 // Pass app="" and rating=0 and count=0 to record a "no reviews found" scan.
+// appKey is the extracted public API key for the review app (may be empty).
 func SaveMerchantReviews(
 	ctx context.Context,
 	db *pgxpool.Pool,
 	merchantID int64,
 	app string,
+	appKey string,
 	avgRating float64,
 	totalReviews int,
 	schemaInjected bool,
@@ -54,6 +56,10 @@ func SaveMerchantReviews(
 	var appVal *string
 	if app != "" && app != "none" {
 		appVal = &app
+	}
+	var appKeyVal *string
+	if appKey != "" {
+		appKeyVal = &appKey
 	}
 	var ratingVal *float64
 	if avgRating > 0 {
@@ -63,13 +69,14 @@ func SaveMerchantReviews(
 	_, err := db.Exec(ctx, `
 		UPDATE merchants SET
 			review_app              = $1,
-			avg_rating              = $2,
-			total_reviews           = $3,
-			review_schema_injected  = $4,
+			review_app_key          = $2,
+			avg_rating              = $3,
+			total_reviews           = $4,
+			review_schema_injected  = $5,
 			reviews_last_scanned_at = NOW(),
 			updated_at              = NOW()
-		WHERE id = $5
-	`, appVal, ratingVal, totalReviews, schemaInjected, merchantID)
+		WHERE id = $6
+	`, appVal, appKeyVal, ratingVal, totalReviews, schemaInjected, merchantID)
 	return err
 }
 

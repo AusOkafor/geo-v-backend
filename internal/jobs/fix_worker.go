@@ -521,7 +521,7 @@ func (w *SchemaRebuildWorker) Work(ctx context.Context, job *river.Job[SchemaReb
 
 	// Mark schema as injected if review data was included.
 	if avgRating > 0 {
-		_ = store.SaveMerchantReviews(ctx, w.db, merchant.ID, "", avgRating, reviewCount, true)
+		_ = store.SaveMerchantReviews(ctx, w.db, merchant.ID, "", "", avgRating, reviewCount, true)
 	}
 
 	slog.Info("schema rebuild: complete",

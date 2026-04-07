@@ -44,54 +44,86 @@ func (w *ReviewScanWorker) Work(ctx context.Context, job *river.Job[ReviewScanJo
 		return fmt.Errorf("review scan: decrypt token: %w", err)
 	}
 
-	// Phase 1: detect app by inspecting the active theme's snippet files.
-	// Uses read_content scope — no additional OAuth permissions required.
-	themeApp, err := shopify.DetectReviewAppFromTheme(ctx, merchant.ShopDomain, token)
+	// ── Phase 1: detect app + extract API key from active theme ──────────────
+	themeResult, err := shopify.DetectReviewAppFromTheme(ctx, merchant.ShopDomain, token)
 	if err != nil {
 		slog.Warn("review scan: theme detection failed",
 			"merchant_id", merchantID, "err", err)
+		themeResult = &shopify.ThemeDetectionResult{}
 	}
 
 	slog.Info("review scan: theme detection",
 		"merchant_id", merchantID,
-		"detected_app", themeApp,
+		"detected_app", themeResult.App,
+		"has_app_key", themeResult.AppKey != "",
 	)
 
-	// Phase 2: fetch product metafields for rating data.
-	// Legacy review apps (that write to public namespaces) will populate this.
-	metafields, err := shopify.FetchProductReviewMetafields(ctx, merchant.ShopDomain, token, 5)
-	if err != nil {
-		slog.Warn("review scan: metafield fetch failed",
-			"merchant_id", merchantID, "err", err)
-	}
+	// ── Phase 2: fetch rating data ────────────────────────────────────────────
+	var avgRating float64
+	var totalCount int
+	var detectedApp reviews.App
 
-	data := reviews.Detect(metafields)
+	// 2a. Try Yotpo direct API if app key was extracted.
+	if themeResult.App == "yotpo" && themeResult.AppKey != "" {
+		productMetafields, _ := shopify.FetchProductReviewMetafields(ctx, merchant.ShopDomain, token, 10)
+		productGIDs := make([]string, 0, len(productMetafields))
+		for _, p := range productMetafields {
+			productGIDs = append(productGIDs, p.ProductGID)
+		}
 
-	// If theme detection found an app but metafields had no data,
-	// use the theme result for the app name with zero ratings.
-	if data.App == reviews.AppNone && themeApp != "" {
-		data.App = reviews.App(themeApp)
+		r, c, apiErr := reviews.FetchYotpoRatings(ctx, themeResult.AppKey, productGIDs)
+		if apiErr != nil {
+			slog.Warn("review scan: yotpo api failed",
+				"merchant_id", merchantID, "err", apiErr)
+		} else {
+			avgRating = r
+			totalCount = c
+			slog.Info("review scan: yotpo api result",
+				"merchant_id", merchantID,
+				"avg_rating", avgRating,
+				"total_reviews", totalCount,
+			)
+		}
+		detectedApp = reviews.AppYotpo
+	} else {
+		// 2b. Fallback: read product metafields (works for apps that write public namespaces).
+		metafields, metaErr := shopify.FetchProductReviewMetafields(ctx, merchant.ShopDomain, token, 5)
+		if metaErr != nil {
+			slog.Warn("review scan: metafield fetch failed",
+				"merchant_id", merchantID, "err", metaErr)
+		}
+		data := reviews.Detect(metafields)
+		avgRating = data.AvgRating
+		totalCount = data.TotalCount
+
+		// Use theme detection result for app name when metafields found nothing.
+		detectedApp = data.App
+		if detectedApp == reviews.AppNone && themeResult.App != "" {
+			detectedApp = reviews.App(themeResult.App)
+		}
 	}
 
 	slog.Info("review scan: complete",
 		"merchant_id", merchantID,
-		"app", data.App,
-		"avg_rating", data.AvgRating,
-		"total_reviews", data.TotalCount,
-		"products_hit", data.ProductsHit,
+		"app", detectedApp,
+		"avg_rating", avgRating,
+		"total_reviews", totalCount,
 	)
 
 	if err := store.SaveMerchantReviews(
 		ctx, w.db, merchantID,
-		string(data.App),
-		data.AvgRating,
-		data.TotalCount,
+		string(detectedApp),
+		themeResult.AppKey,
+		avgRating,
+		totalCount,
 		false,
 	); err != nil {
 		return fmt.Errorf("review scan: save: %w", err)
 	}
 
-	if data.HasReviews {
+	// Trigger schema rebuild whenever an app is detected, even with zero ratings.
+	// SchemaRebuildWorker will inject aggregateRating only when avg_rating > 0.
+	if detectedApp != reviews.AppNone {
 		if _, err := w.riverClient.Insert(ctx, SchemaRebuildJobArgs{MerchantID: merchantID}, nil); err != nil {
 			slog.Warn("review scan: could not enqueue schema rebuild", "err", err)
 		}

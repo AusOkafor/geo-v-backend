@@ -44,17 +44,40 @@ func (w *ReviewScanWorker) Work(ctx context.Context, job *river.Job[ReviewScanJo
 		return fmt.Errorf("review scan: decrypt token: %w", err)
 	}
 
-	// Fetch review metafields for the first 5 active products in one GraphQL call.
+	// Phase 1: detect app via installed apps list (does not rely on metafields).
+	installedApps, err := shopify.FetchInstalledApps(ctx, merchant.ShopDomain, token)
+	if err != nil {
+		slog.Warn("review scan: installed apps fetch failed",
+			"merchant_id", merchantID, "err", err)
+	}
+
+	detectedApp := reviews.AppNone
+	if len(installedApps) > 0 {
+		detectedApp = reviews.DetectAppFromInstalled(installedApps)
+	}
+
+	slog.Info("review scan: app detection",
+		"merchant_id", merchantID,
+		"app", detectedApp,
+		"installed_apps_count", len(installedApps),
+	)
+
+	// Phase 2: fetch rating data from product metafields.
+	// Some review apps still write to legacy (non-app-owned) metafields.
+	// If this returns no data, we still record the detected app.
 	metafields, err := shopify.FetchProductReviewMetafields(ctx, merchant.ShopDomain, token, 5)
 	if err != nil {
-		// Non-fatal — record the scan attempt so we don't hammer failed stores.
 		slog.Warn("review scan: metafield fetch failed",
 			"merchant_id", merchantID, "err", err)
-		_ = store.SaveMerchantReviews(ctx, w.db, merchantID, "none", 0, 0, false)
-		return nil
 	}
 
 	data := reviews.Detect(metafields)
+
+	// If app detection via installed apps found something but metafields didn't,
+	// use the installed-apps result for the app name with zero ratings.
+	if data.App == reviews.AppNone && detectedApp != reviews.AppNone {
+		data.App = detectedApp
+	}
 
 	slog.Info("review scan: complete",
 		"merchant_id", merchantID,

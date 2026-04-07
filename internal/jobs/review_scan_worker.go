@@ -63,40 +63,45 @@ func (w *ReviewScanWorker) Work(ctx context.Context, job *river.Job[ReviewScanJo
 	var totalCount int
 	var detectedApp reviews.App
 
-	// 2a. Try Yotpo direct API if app key was extracted.
-	if themeResult.App == "yotpo" && themeResult.AppKey != "" {
-		productMetafields, _ := shopify.FetchProductReviewMetafields(ctx, merchant.ShopDomain, token, 10)
-		productGIDs := make([]string, 0, len(productMetafields))
-		for _, p := range productMetafields {
-			productGIDs = append(productGIDs, p.ProductGID)
+	switch themeResult.App {
+	case "yotpo":
+		detectedApp = reviews.AppYotpo
+		if themeResult.AppKey != "" {
+			productMetafields, _ := shopify.FetchProductReviewMetafields(ctx, merchant.ShopDomain, token, 10)
+			productGIDs := make([]string, 0, len(productMetafields))
+			for _, p := range productMetafields {
+				productGIDs = append(productGIDs, p.ProductGID)
+			}
+			r, c, apiErr := reviews.FetchYotpoRatings(ctx, themeResult.AppKey, productGIDs)
+			if apiErr != nil {
+				slog.Warn("review scan: yotpo api failed", "merchant_id", merchantID, "err", apiErr)
+			} else {
+				avgRating, totalCount = r, c
+				slog.Info("review scan: yotpo api result",
+					"merchant_id", merchantID, "avg_rating", avgRating, "total_reviews", totalCount)
+			}
 		}
 
-		r, c, apiErr := reviews.FetchYotpoRatings(ctx, themeResult.AppKey, productGIDs)
+	case "judge_me":
+		detectedApp = reviews.AppJudgeMe
+		r, c, apiErr := reviews.FetchJudgeMeRatings(ctx, merchant.ShopDomain)
 		if apiErr != nil {
-			slog.Warn("review scan: yotpo api failed",
-				"merchant_id", merchantID, "err", apiErr)
+			slog.Warn("review scan: judge.me api failed", "merchant_id", merchantID, "err", apiErr)
 		} else {
-			avgRating = r
-			totalCount = c
-			slog.Info("review scan: yotpo api result",
-				"merchant_id", merchantID,
-				"avg_rating", avgRating,
-				"total_reviews", totalCount,
-			)
+			avgRating, totalCount = r, c
+			slog.Info("review scan: judge.me api result",
+				"merchant_id", merchantID, "avg_rating", avgRating, "total_reviews", totalCount)
 		}
-		detectedApp = reviews.AppYotpo
-	} else {
-		// 2b. Fallback: read product metafields (works for apps that write public namespaces).
+
+	default:
+		// Fallback: product metafields (works for apps that write public namespaces).
 		metafields, metaErr := shopify.FetchProductReviewMetafields(ctx, merchant.ShopDomain, token, 5)
 		if metaErr != nil {
-			slog.Warn("review scan: metafield fetch failed",
-				"merchant_id", merchantID, "err", metaErr)
+			slog.Warn("review scan: metafield fetch failed", "merchant_id", merchantID, "err", metaErr)
 		}
 		data := reviews.Detect(metafields)
 		avgRating = data.AvgRating
 		totalCount = data.TotalCount
-
-		// Use theme detection result for app name when metafields found nothing.
 		detectedApp = data.App
 		if detectedApp == reviews.AppNone && themeResult.App != "" {
 			detectedApp = reviews.App(themeResult.App)

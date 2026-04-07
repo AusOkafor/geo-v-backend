@@ -152,12 +152,11 @@ query ThemeSnippets($themeId: ID!) {
 		}
 		if json.Unmarshal(raw2, &filesResp) == nil {
 			for _, f := range filesResp.Theme.Files.Nodes {
-				if !strings.HasPrefix(f.Filename, "snippets/") {
-					continue
-				}
-				stem := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(f.Filename, "snippets/"), ".liquid"))
+				// Check entire filename (any directory) for review app identifiers.
+				// Judge.me may only appear in sections/ or templates/, not snippets/.
+				nameLower := strings.ToLower(f.Filename)
 				for pattern, appID := range knownReviewAppSnippets {
-					if strings.Contains(stem, pattern) {
+					if strings.Contains(nameLower, pattern) {
 						result.App = appID
 						break
 					}

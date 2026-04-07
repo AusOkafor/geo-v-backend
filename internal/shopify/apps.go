@@ -70,7 +70,7 @@ query ActiveTheme {
 	const filesQ = `
 query ThemeSnippets($themeId: ID!) {
   theme(id: $themeId) {
-    files(filenames: [], first: 200) {
+    files(first: 200) {
       nodes {
         filename
       }

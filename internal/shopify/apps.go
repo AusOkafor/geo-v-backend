@@ -7,8 +7,7 @@ import (
 	"strings"
 )
 
-// knownReviewAppSnippets maps theme snippet filenames to review app identifiers.
-// Every review app adds recognisable snippet files to the active theme on install.
+// knownReviewAppSnippets maps theme snippet filenames (stem, lowercased) to app IDs.
 var knownReviewAppSnippets = map[string]string{
 	"judgeme_widgets":       "judge_me",
 	"judgeme":               "judge_me",
@@ -27,6 +26,31 @@ var knownReviewAppSnippets = map[string]string{
 	"fera":                  "fera",
 	"fera-widget":           "fera",
 	"ryviu":                 "ryviu",
+}
+
+// knownReviewAppCDN maps CDN/script URL substrings found in theme.liquid to app IDs.
+// Used when a review app injects its script directly into theme.liquid rather than
+// adding a separate snippet file.
+var knownReviewAppCDN = []struct {
+	pattern string
+	appID   string
+}{
+	{"staticw2.yotpo.com", "yotpo"},
+	{"cdn.yotpo.com", "yotpo"},
+	{"yotpo.com/", "yotpo"},
+	{"cdn.judge.me", "judge_me"},
+	{"judge.me/", "judge_me"},
+	{"judgeme", "judge_me"},
+	{"cdn.stamped.io", "stamped"},
+	{"stamped.io/", "stamped"},
+	{"loox.io/", "loox"},
+	{"cdn.okendo.io", "okendo"},
+	{"okendo.io/", "okendo"},
+	{"cdn.growave.io", "growave"},
+	{"growave.io/", "growave"},
+	{"cdn.fera.ai", "fera"},
+	{"fera.ai/", "fera"},
+	{"ryviu.com/", "ryviu"},
 }
 
 // FetchThemeSnippetNames returns all filenames in the active theme.
@@ -160,5 +184,52 @@ query ThemeSnippets($themeId: ID!) {
 			}
 		}
 	}
+
+	// Fallback: read layout/theme.liquid content and scan for known CDN URLs.
+	// Some review apps paste their script tag directly into theme.liquid.
+	const contentQ = `
+query ThemeLiquidContent($themeId: ID!) {
+  theme(id: $themeId) {
+    files(filenames: ["layout/theme.liquid"], first: 1) {
+      nodes {
+        filename
+        body {
+          ... on OnlineStoreThemeFileBodyText {
+            content
+          }
+        }
+      }
+    }
+  }
+}`
+	raw3, err := Query(ctx, shop, token, contentQ, map[string]any{"themeId": themeID})
+	if err != nil {
+		// Non-fatal — snippet scan already came up empty.
+		return "", nil
+	}
+
+	var contentResp struct {
+		Theme struct {
+			Files struct {
+				Nodes []struct {
+					Filename string `json:"filename"`
+					Body     struct {
+						Content string `json:"content"`
+					} `json:"body"`
+				} `json:"nodes"`
+			} `json:"files"`
+		} `json:"theme"`
+	}
+	if err := json.Unmarshal(raw3, &contentResp); err != nil || len(contentResp.Theme.Files.Nodes) == 0 {
+		return "", nil
+	}
+
+	themeLiquid := strings.ToLower(contentResp.Theme.Files.Nodes[0].Body.Content)
+	for _, m := range knownReviewAppCDN {
+		if strings.Contains(themeLiquid, m.pattern) {
+			return m.appID, nil
+		}
+	}
+
 	return "", nil
 }

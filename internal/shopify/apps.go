@@ -29,6 +29,58 @@ var knownReviewAppSnippets = map[string]string{
 	"ryviu":                 "ryviu",
 }
 
+// FetchThemeSnippetNames returns all filenames in the active theme.
+// Used by the debug endpoint to identify what a review app actually writes.
+func FetchThemeSnippetNames(ctx context.Context, shop, token string) ([]string, error) {
+	const themeQ = `
+query ActiveTheme {
+  themes(first: 5, roles: [MAIN]) {
+    nodes { id }
+  }
+}`
+	raw, err := Query(ctx, shop, token, themeQ, nil)
+	if err != nil {
+		return nil, fmt.Errorf("shopify: FetchThemeSnippetNames themes: %w", err)
+	}
+	var themeResp struct {
+		Themes struct {
+			Nodes []struct{ ID string `json:"id"` } `json:"nodes"`
+		} `json:"themes"`
+	}
+	if err := json.Unmarshal(raw, &themeResp); err != nil || len(themeResp.Themes.Nodes) == 0 {
+		return nil, fmt.Errorf("shopify: FetchThemeSnippetNames: no active theme")
+	}
+	themeID := themeResp.Themes.Nodes[0].ID
+
+	const filesQ = `
+query ThemeFiles($themeId: ID!) {
+  theme(id: $themeId) {
+    files(first: 200) {
+      nodes { filename }
+    }
+  }
+}`
+	raw2, err := Query(ctx, shop, token, filesQ, map[string]any{"themeId": themeID})
+	if err != nil {
+		return nil, fmt.Errorf("shopify: FetchThemeSnippetNames files: %w", err)
+	}
+	var filesResp struct {
+		Theme struct {
+			Files struct {
+				Nodes []struct{ Filename string `json:"filename"` } `json:"nodes"`
+			} `json:"files"`
+		} `json:"theme"`
+	}
+	if err := json.Unmarshal(raw2, &filesResp); err != nil {
+		return nil, fmt.Errorf("shopify: FetchThemeSnippetNames decode: %w", err)
+	}
+	names := make([]string, 0, len(filesResp.Theme.Files.Nodes))
+	for _, f := range filesResp.Theme.Files.Nodes {
+		names = append(names, f.Filename)
+	}
+	return names, nil
+}
+
 // DetectReviewAppFromTheme returns the review app identifier found in the active
 // theme's snippet files, or "" if no known review app snippets are present.
 // Uses read_content scope (already in our OAuth scopes).

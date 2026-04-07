@@ -72,6 +72,13 @@ func (h *Handler) AdminDebugProductMetafields(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
+
+	themeFiles, err := shopify.FetchThemeSnippetNames(c.Request().Context(), merchant.ShopDomain, token)
+	if err != nil {
+		// Non-fatal — include the error but still return metafield data.
+		themeFiles = []string{"error: " + err.Error()}
+	}
+
 	return c.JSON(http.StatusOK, map[string]any{
 		"merchant_id":    merchantID,
 		"shop_domain":    merchant.ShopDomain,
@@ -79,6 +86,7 @@ func (h *Handler) AdminDebugProductMetafields(c echo.Context) error {
 		"products":       result.Products,
 		"metafields":     result.Metafields,
 		"count":          len(result.Metafields),
+		"theme_files":    themeFiles,
 	})
 }
 

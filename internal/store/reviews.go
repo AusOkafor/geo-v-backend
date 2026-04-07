@@ -9,14 +9,14 @@ import (
 
 // MerchantReviewStatus is the review state stored on a merchant row.
 type MerchantReviewStatus struct {
-	MerchantID           int64
-	ShopDomain           string
-	BrandName            string
-	ReviewApp            *string   // nil = never scanned
-	AvgRating            *float64
-	TotalReviews         int
-	ReviewSchemaInjected bool
-	ReviewsLastScannedAt *time.Time
+	MerchantID           int64      `json:"merchant_id"`
+	ShopDomain           string     `json:"shop_domain"`
+	BrandName            string     `json:"brand_name"`
+	ReviewApp            *string    `json:"review_app"`
+	AvgRating            *float64   `json:"avg_rating"`
+	TotalReviews         int        `json:"total_reviews"`
+	ReviewSchemaInjected bool       `json:"review_schema_injected"`
+	ReviewsLastScannedAt *time.Time `json:"reviews_last_scanned_at"`
 }
 
 // HasReviews returns true when the merchant has a detected review app with actual reviews.

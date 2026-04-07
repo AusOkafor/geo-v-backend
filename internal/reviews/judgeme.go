@@ -4,68 +4,56 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"time"
+	"strconv"
+	"strings"
+
+	"github.com/austinokafor/geo-backend/internal/shopify"
 )
 
-// FetchJudgeMeRatings calls Judge.me's public widget API for a given shop domain
-// and returns a weighted-average rating and total review count.
-// No authentication required — Judge.me exposes aggregate stats publicly.
-func FetchJudgeMeRatings(ctx context.Context, shopDomain string) (avgRating float64, totalCount int, err error) {
-	if shopDomain == "" {
-		return 0, 0, nil
+// FetchJudgeMeRatings reads Judge.me's aggregate rating data directly from
+// Shopify shop-level and product-level metafields using the merchant's own
+// access token — no Judge.me API key required.
+//
+// Judge.me writes:
+//   - shop.metafields.judgeme.shop_reviews_count  (total reviews)
+//   - shop.metafields.judgeme.shop_reviews_rating (average rating, if present)
+//   - product.metafields.judgeme.rating           (per-product avg)
+//   - product.metafields.judgeme.rating_count     (per-product count)
+func FetchJudgeMeRatings(ctx context.Context, shop_, token string) (avgRating float64, totalCount int, err error) {
+	const q = `
+query JudgeMeShopStats {
+  shop {
+    reviews_count:  metafield(namespace: "judgeme", key: "shop_reviews_count")  { value }
+    reviews_rating: metafield(namespace: "judgeme", key: "shop_reviews_rating") { value }
+  }
+}`
+	raw, apiErr := shopify.Query(ctx, shop_, token, q, nil)
+	if apiErr != nil {
+		return 0, 0, fmt.Errorf("judge.me shop metafields: %w", apiErr)
 	}
 
-	// Judge.me public stats endpoint — returns site-wide aggregate.
-	url := fmt.Sprintf(
-		"https://judge.me/api/v1/reviews?shop_domain=%s&platform=shopify&per_page=0",
-		shopDomain,
-	)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return 0, 0, err
+	var resp struct {
+		Shop struct {
+			ReviewsCount  *struct{ Value string `json:"value"` } `json:"reviews_count"`
+			ReviewsRating *struct{ Value string `json:"value"` } `json:"reviews_rating"`
+		} `json:"shop"`
 	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, 0, fmt.Errorf("judge.me api: status %d", resp.StatusCode)
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return 0, 0, fmt.Errorf("judge.me shop metafields decode: %w", err)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	if err != nil {
-		return 0, 0, err
-	}
-
-	var data struct {
-		Reviews []struct {
-			Rating int `json:"rating"`
-		} `json:"reviews"`
-		// Some endpoints return totals directly
-		CurrentPage int `json:"current_page"`
-		PerPage     int `json:"per_page"`
-		TotalCount  int `json:"total"`
-	}
-	if err := json.Unmarshal(body, &data); err != nil {
-		return 0, 0, err
-	}
-
-	// Calculate average from returned reviews if present.
-	if len(data.Reviews) > 0 {
-		var sum float64
-		for _, r := range data.Reviews {
-			sum += float64(r.Rating)
+	if resp.Shop.ReviewsCount != nil && resp.Shop.ReviewsCount.Value != "" {
+		val := strings.TrimSpace(resp.Shop.ReviewsCount.Value)
+		if c, parseErr := strconv.Atoi(val); parseErr == nil {
+			totalCount = c
 		}
-		return roundTo2(sum / float64(len(data.Reviews))), len(data.Reviews), nil
+	}
+	if resp.Shop.ReviewsRating != nil && resp.Shop.ReviewsRating.Value != "" {
+		val := strings.TrimSpace(resp.Shop.ReviewsRating.Value)
+		if r, parseErr := strconv.ParseFloat(val, 64); parseErr == nil {
+			avgRating = roundTo2(r)
+		}
 	}
 
-	return 0, 0, nil
+	return avgRating, totalCount, nil
 }

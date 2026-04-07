@@ -53,6 +53,8 @@ func FetchProductReviewMetafields(ctx context.Context, shop, token string, limit
 	}
 
 	// All known review-app metafield namespaces/keys fetched in one query via aliases.
+	// Judge.me uses two possible namespaces depending on integration version:
+	//   "judge_me_reviews" (older) and "judgeme" (newer inline snippet approach).
 	const q = `
 query ReviewMetafields($first: Int!) {
   products(first: $first) {
@@ -61,6 +63,8 @@ query ReviewMetafields($first: Int!) {
       title
       jm_rating:     metafield(namespace: "judge_me_reviews", key: "rating")       { value }
       jm_count:      metafield(namespace: "judge_me_reviews", key: "rating_count") { value }
+      jm2_rating:    metafield(namespace: "judgeme",           key: "rating")       { value }
+      jm2_count:     metafield(namespace: "judgeme",           key: "rating_count") { value }
       yotpo_rating:  metafield(namespace: "yotpo",            key: "reviews_average") { value }
       yotpo_count:   metafield(namespace: "yotpo",            key: "reviews_count")   { value }
       stamped_rating:metafield(namespace: "stamped",          key: "reviews_average") { value }
@@ -91,6 +95,8 @@ query ReviewMetafields($first: Int!) {
 				Title string `json:"title"`
 				JMRating      *struct{ Value string `json:"value"` } `json:"jm_rating"`
 				JMCount       *struct{ Value string `json:"value"` } `json:"jm_count"`
+				JM2Rating     *struct{ Value string `json:"value"` } `json:"jm2_rating"`
+				JM2Count      *struct{ Value string `json:"value"` } `json:"jm2_count"`
 				YotpoRating   *struct{ Value string `json:"value"` } `json:"yotpo_rating"`
 				YotpoCount    *struct{ Value string `json:"value"` } `json:"yotpo_count"`
 				StampedRating *struct{ Value string `json:"value"` } `json:"stamped_rating"`
@@ -124,8 +130,13 @@ query ReviewMetafields($first: Int!) {
 			v := s.Value
 			return &v
 		}
-		p.JMRating      = pv(n.JMRating)
-		p.JMCount       = pv(n.JMCount)
+		// Prefer newer "judgeme" namespace, fall back to "judge_me_reviews".
+		p.JMRating = pv(n.JM2Rating)
+		p.JMCount  = pv(n.JM2Count)
+		if p.JMRating == nil {
+			p.JMRating = pv(n.JMRating)
+			p.JMCount  = pv(n.JMCount)
+		}
 		p.YotpoRating   = pv(n.YotpoRating)
 		p.YotpoCount    = pv(n.YotpoCount)
 		p.StampedRating = pv(n.StampedRating)

@@ -84,12 +84,12 @@ func (w *ReviewScanWorker) Work(ctx context.Context, job *river.Job[ReviewScanJo
 
 	case "judge_me":
 		detectedApp = reviews.AppJudgeMe
-		r, c, apiErr := reviews.FetchJudgeMeRatings(ctx, merchant.ShopDomain)
+		r, c, apiErr := reviews.FetchJudgeMeRatings(ctx, merchant.ShopDomain, token)
 		if apiErr != nil {
-			slog.Warn("review scan: judge.me api failed", "merchant_id", merchantID, "err", apiErr)
+			slog.Warn("review scan: judge.me metafields failed", "merchant_id", merchantID, "err", apiErr)
 		} else {
 			avgRating, totalCount = r, c
-			slog.Info("review scan: judge.me api result",
+			slog.Info("review scan: judge.me result",
 				"merchant_id", merchantID, "avg_rating", avgRating, "total_reviews", totalCount)
 		}
 

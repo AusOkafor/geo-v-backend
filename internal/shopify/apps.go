@@ -28,28 +28,44 @@ var knownReviewAppSnippets = map[string]string{
 	"ryviu":                 "ryviu",
 }
 
-// knownReviewAppCDN maps CDN/script URL substrings found in theme.liquid to app IDs.
-// Used when a review app injects its script directly into theme.liquid rather than
-// adding a separate snippet file.
+// knownReviewAppCDN maps substrings found in theme.liquid content to app IDs.
+// Covers both CDN script URLs and widget HTML attributes/class names, since
+// some apps paste a widget <div> directly without a separate script tag.
 var knownReviewAppCDN = []struct {
 	pattern string
 	appID   string
 }{
+	// Yotpo — CDN URLs and widget HTML attributes
 	{"staticw2.yotpo.com", "yotpo"},
 	{"cdn.yotpo.com", "yotpo"},
 	{"yotpo.com/", "yotpo"},
+	{"yotpo-widget-instance", "yotpo"},
+	{"data-yotpo-", "yotpo"},
+	{"yotpo-widget", "yotpo"},
+	// Judge.me
 	{"cdn.judge.me", "judge_me"},
 	{"judge.me/", "judge_me"},
-	{"judgeme", "judge_me"},
+	{"judgeme_widgets", "judge_me"},
+	{"data-judgeme", "judge_me"},
+	// Stamped
 	{"cdn.stamped.io", "stamped"},
 	{"stamped.io/", "stamped"},
+	{"data-stamped", "stamped"},
+	// Loox
 	{"loox.io/", "loox"},
+	{"data-loox", "loox"},
+	// Okendo
 	{"cdn.okendo.io", "okendo"},
 	{"okendo.io/", "okendo"},
+	{"data-okendo", "okendo"},
+	// Growave
 	{"cdn.growave.io", "growave"},
 	{"growave.io/", "growave"},
+	// Fera
 	{"cdn.fera.ai", "fera"},
 	{"fera.ai/", "fera"},
+	{"data-fera", "fera"},
+	// Ryviu
 	{"ryviu.com/", "ryviu"},
 }
 

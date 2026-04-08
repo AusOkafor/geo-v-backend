@@ -109,6 +109,8 @@ func (w *OnboardingAuditWorker) Work(ctx context.Context, job *river.Job[Onboard
 	if _, err := w.riverClient.Insert(ctx, FixGenerationJobArgs{MerchantID: merchantID}, nil); err != nil {
 		slog.Warn("onboarding audit: failed to queue fix generation (non-fatal)",
 			"merchant_id", merchantID, "err", err)
+	} else {
+		slog.Info("onboarding audit: fix generation queued", "merchant_id", merchantID)
 	}
 
 	return nil

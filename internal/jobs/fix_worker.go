@@ -110,6 +110,10 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		}
 	}
 
+	// Load store audit — nil if audit hasn't run yet (first install race or audit failed).
+	// When nil, all fixes are generated as before; no regressions for existing merchants.
+	audit, _ := store.GetMerchantAudit(ctx, w.db, merchant.ID)
+
 	// Check which fix types already exist (any status except rejected)
 	existingFixes, _ := store.GetFixes(ctx, w.db, merchant.ID, "")
 	existingTypes := map[fix.FixType]bool{}
@@ -138,8 +142,10 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 
 	// Fix generation order: structure first (schema → faq), then content (description).
 	// Structure fixes are the foundation — without them, content fixes have less impact.
-	// Layer 1: Schema — lets AI parse the catalog structure
-	if !existingTypes[fix.FixSchema] {
+	// Layer 1: Schema — lets AI parse the catalog structure.
+	// Skip if the audit confirmed our schema metafield is already live on the store.
+	schemaAlreadyLive := audit != nil && audit.SchemaLive
+	if !existingTypes[fix.FixSchema] && !schemaAlreadyLive {
 		result, err := w.generator.Generate(ctx, fix.GenerateInput{
 			BrandName:  merchant.BrandName,
 			Category:   merchant.Category,
@@ -163,12 +169,11 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 	}
 
 	// Layer 1: FAQ — matches the exact queries AI is asked.
-	// Only create this fix if the merchant has not already added their own FAQs in Settings.
-	// Generated AI FAQs contain placeholder guesses the merchant cannot verify — real FAQs
-	// must come from the merchant. If none exist, surface an action item pointing to Settings.
+	// Skip if: merchant has real FAQs in our Settings, OR audit shows a live FAQ page on their store.
 	if !existingTypes[fix.FixFAQ] {
 		merchantFAQs, _ := store.GetMerchantFAQs(ctx, w.db, merchant.ID)
-		if len(merchantFAQs) == 0 {
+		hasFAQPage := audit != nil && audit.HasFAQPage
+		if len(merchantFAQs) == 0 && !hasFAQPage {
 			// No real FAQs yet — create a manual action item directing the merchant to add them.
 			actionPayload, _ := json.Marshal(map[string]string{
 				"action": "Add your store FAQs in Settings → FAQs. FAQs help AI assistants answer buyer questions about your shipping, returns, materials, and sizing — improving citation rates significantly.",
@@ -199,7 +204,10 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 			break
 		}
 	}
-	if picked != nil && !existingTypes[fix.FixDescription] {
+	// Skip description fix if audit shows descriptions are already high quality.
+	// Threshold: avg >= 100 words AND no products with zero-word descriptions.
+	descriptionOK := audit != nil && audit.AvgDescriptionWords >= 100 && audit.ProductsWithNoDescription == 0
+	if picked != nil && !existingTypes[fix.FixDescription] && !descriptionOK {
 		result, err := w.generator.Generate(ctx, fix.GenerateInput{
 			BrandName:          merchant.BrandName,
 			Category:           merchant.Category,

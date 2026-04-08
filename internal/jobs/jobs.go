@@ -126,6 +126,24 @@ func (ReviewScanJobArgs) InsertOpts() river.InsertOpts {
 	}
 }
 
+// ─── OnboardingAuditJobArgs ───────────────────────────────────────────────────
+
+// OnboardingAuditJobArgs audits a merchant's existing store state on install.
+// Results are persisted to merchant_audit and used by FixGenerationWorker to
+// skip recommendations for things the merchant already has.
+type OnboardingAuditJobArgs struct {
+	MerchantID int64 `json:"merchant_id"`
+}
+
+func (OnboardingAuditJobArgs) Kind() string { return "onboarding_audit" }
+
+func (OnboardingAuditJobArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		Queue:       "sync",
+		MaxAttempts: 3,
+	}
+}
+
 // ─── DataDeletionJobArgs ──────────────────────────────────────────────────────
 
 // DataDeletionJobArgs deletes all data for a store on GDPR uninstall.

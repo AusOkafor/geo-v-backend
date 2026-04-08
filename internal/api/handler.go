@@ -87,4 +87,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	admin.POST("/reviews/scan/:merchant_id", h.AdminScanMerchantReviews)
 	admin.POST("/reviews/scan-all", h.AdminScanAllReviews)
 	admin.GET("/reviews/debug/:merchant_id", h.AdminDebugProductMetafields)
+
+	// Onboarding Audit — re-run store audit for a merchant on demand.
+	admin.POST("/audit/:merchant_id", h.AdminTriggerAudit)
 }

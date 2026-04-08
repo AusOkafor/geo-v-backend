@@ -132,6 +132,13 @@ func (h *Handler) OAuthCallback(c echo.Context) error {
 		slog.Error("oauth: failed to enqueue product sync", "merchant_id", merchant.ID, "err", err)
 	}
 
+	// Enqueue onboarding audit — reads existing store state so FixGenerationWorker
+	// can skip recommendations for things the merchant already has.
+	if _, err = h.River.Insert(c.Request().Context(),
+		jobs.OnboardingAuditJobArgs{MerchantID: merchant.ID}, nil); err != nil {
+		slog.Error("oauth: failed to enqueue onboarding audit", "merchant_id", merchant.ID, "err", err)
+	}
+
 	// Issue a signed JWT so the token can't be forged by knowing the shop domain
 	jwtToken, err := auth.Issue(shop, []byte(h.Config.EncryptionKey))
 	if err != nil {

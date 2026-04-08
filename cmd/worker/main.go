@@ -88,6 +88,7 @@ func main() {
 	river.AddWorker(workers, jobs.NewDataDeletionWorker(pool))
 	river.AddWorker(workers, jobs.NewFixGenerationWorker(pool, fixGenerator))
 	river.AddWorker(workers, jobs.NewSchemaRebuildWorker(pool, encKey))
+	river.AddWorker(workers, jobs.NewOnboardingAuditWorker(pool, encKey))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{

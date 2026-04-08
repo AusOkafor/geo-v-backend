@@ -179,7 +179,6 @@ func ResetMerchantData(ctx context.Context, db *pgxpool.Pool, merchantID int64) 
 		"citation_verifications",
 		"pending_fixes",
 		"spot_checks",
-		"validation_runs",
 		"accuracy_metrics",
 		"response_stability",
 		"scan_costs",

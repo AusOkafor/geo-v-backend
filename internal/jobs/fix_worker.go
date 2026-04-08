@@ -200,14 +200,25 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 	// Skip if audit confirms descriptions are already high quality across the board.
 	// Threshold: avg >= 100 words AND no products with zero-word descriptions.
 	descriptionOK := audit != nil && audit.AvgDescriptionWords >= 100 && audit.ProductsWithNoDescription == 0
+
+	// If the audit signals description problems but the products table is empty,
+	// the product sync hasn't finished yet. Return an error so River retries after backoff,
+	// giving the sync time to complete before description fixes are attempted.
+	auditShowsDescriptionIssues := audit != nil && (audit.ProductsWithNoDescription > 0 || audit.ProductsWithShortDescription > 0 || audit.AvgDescriptionWords < 100)
+	if !descriptionOK && auditShowsDescriptionIssues && len(products) == 0 {
+		return fmt.Errorf("fix gen: product sync not yet complete for merchant %d — will retry", merchant.ID)
+	}
+
 	if !descriptionOK && len(products) > 0 {
 		// Sort: empty descriptions first (highest priority), then short ones.
 		// Products with good descriptions are moved to the back naturally since we
 		// only generate fixes for products that need them.
+		// Strip HTML before word counting to match the audit worker's behaviour
+		// (descriptions are stored as raw DescriptionHTML from Shopify).
 		emptyFirst := make([]store.Product, 0, len(products))
 		shortNext := make([]store.Product, 0, len(products))
 		for _, p := range products {
-			wordCount := len(strings.Fields(p.Description))
+			wordCount := len(strings.Fields(stripHTML(p.Description)))
 			if wordCount == 0 {
 				emptyFirst = append(emptyFirst, p)
 			} else if wordCount < 50 {
@@ -232,7 +243,7 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 				Competitors:        competitorNames,
 				FixType:            fix.FixDescription,
 				ProductTitle:       p.Title,
-				CurrentDescription: p.Description,
+				CurrentDescription: stripHTML(p.Description),
 				Tags:               p.Tags,
 				QueryGaps:          missedQueries,
 			})

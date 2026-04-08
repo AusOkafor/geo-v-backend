@@ -196,31 +196,54 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		// If merchant already has FAQs, skip — their real content is already live in the schema.
 	}
 
-	// Layer 2: Description — content targeting specific missed queries
-	var picked *store.Product
-	for i := range products {
-		if !existingTargets[products[i].ShopifyGID] {
-			picked = &products[i]
-			break
-		}
-	}
-	// Skip description fix if audit shows descriptions are already high quality.
+	// Layer 2: Description — per-product fixes targeting specific missed queries.
+	// Skip if audit confirms descriptions are already high quality across the board.
 	// Threshold: avg >= 100 words AND no products with zero-word descriptions.
 	descriptionOK := audit != nil && audit.AvgDescriptionWords >= 100 && audit.ProductsWithNoDescription == 0
-	if picked != nil && !existingTypes[fix.FixDescription] && !descriptionOK {
-		result, err := w.generator.Generate(ctx, fix.GenerateInput{
-			BrandName:          merchant.BrandName,
-			Category:           merchant.Category,
-			Competitors:        competitorNames,
-			FixType:            fix.FixDescription,
-			CurrentDescription: picked.Description,
-			Tags:               picked.Tags,
-			QueryGaps:          missedQueries,
-		})
-		if err == nil {
+	if !descriptionOK && len(products) > 0 {
+		// Sort: empty descriptions first (highest priority), then short ones.
+		// Products with good descriptions are moved to the back naturally since we
+		// only generate fixes for products that need them.
+		emptyFirst := make([]store.Product, 0, len(products))
+		shortNext := make([]store.Product, 0, len(products))
+		for _, p := range products {
+			wordCount := len(strings.Fields(p.Description))
+			if wordCount == 0 {
+				emptyFirst = append(emptyFirst, p)
+			} else if wordCount < 50 {
+				shortNext = append(shortNext, p)
+			}
+		}
+		candidates := append(emptyFirst, shortNext...)
+
+		const maxDescFixes = 3
+		generated := 0
+		for i := range candidates {
+			if generated >= maxDescFixes {
+				break
+			}
+			p := &candidates[i]
+			if existingTargets[p.ShopifyGID] {
+				continue // already have a fix for this product
+			}
+			result, err := w.generator.Generate(ctx, fix.GenerateInput{
+				BrandName:          merchant.BrandName,
+				Category:           merchant.Category,
+				Competitors:        competitorNames,
+				FixType:            fix.FixDescription,
+				ProductTitle:       p.Title,
+				CurrentDescription: p.Description,
+				Tags:               p.Tags,
+				QueryGaps:          missedQueries,
+			})
+			if err != nil {
+				slog.Warn("fix gen: description generation failed (non-fatal)",
+					"merchant_id", merchant.ID, "product_gid", p.ShopifyGID, "err", err)
+				continue
+			}
 			_, err = store.InsertFix(ctx, w.db, store.Fix{
 				MerchantID:  merchant.ID,
-				TargetGID:   picked.ShopifyGID,
+				TargetGID:   p.ShopifyGID,
 				FixType:     string(fix.FixDescription),
 				FixLayer:    "content",
 				Priority:    "high",
@@ -230,8 +253,10 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 				EstImpact:   fix.EstImpact(fix.FixDescription),
 			})
 			if err != nil {
-				return fmt.Errorf("fix gen: insert description fix: %w", err)
+				return fmt.Errorf("fix gen: insert description fix for %s: %w", p.ShopifyGID, err)
 			}
+			existingTargets[p.ShopifyGID] = true
+			generated++
 		}
 	}
 

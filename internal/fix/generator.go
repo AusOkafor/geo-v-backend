@@ -46,6 +46,7 @@ func EstImpact(t FixType) int {
 type GenerateInput struct {
 	BrandName          string
 	Category           string
+	ProductTitle       string // set for per-product description fixes
 	CurrentDescription string
 	Tags               []string
 	Competitors        []string
@@ -165,9 +166,19 @@ func buildPrompt(in GenerateInput) string {
 
 	switch in.FixType {
 	case FixDescription:
-		return fmt.Sprintf(`Generate an optimized product description for brand "%s" (category: %s).
+		productRef := in.ProductTitle
+		if productRef == "" {
+			productRef = in.BrandName
+		}
+		descSection := ""
+		if strings.TrimSpace(in.CurrentDescription) == "" {
+			descSection = "There is currently NO description for this product. Write one from scratch using only the product title and tags provided — do not invent features or claims beyond what the tags imply."
+		} else {
+			descSection = fmt.Sprintf("Current description: %s", in.CurrentDescription)
+		}
+		return fmt.Sprintf(`Generate an optimized product description for "%s" by brand "%s" (category: %s).
 
-Current description: %s
+%s
 Tags: %v
 Top competitors AI cites instead: %v%s
 
@@ -178,11 +189,11 @@ Requirements:
 - Cover: what the product is, who it's for, key materials/features, use cases, fit or sizing guidance if relevant
 - Write in a natural brand voice — do NOT repeat the brand name more than twice
 - Do NOT mention SEO, keyword density, AI optimization, or visibility tactics
-- Do NOT invent certifications, materials, or claims that aren't verifiable from the current description or tags
+- Do NOT invent certifications, materials, or claims that aren't verifiable from the product title or tags
 - The explanation field must describe what the description covers and why it helps buyers find the product — never reference internal tactics like "brand name repetition" or "semantic structure"
 
 Return JSON: {"title": "Fix title", "explanation": "What this description covers and how it helps shoppers find the right product", "generated": {"description": "HTML product description"}}`,
-			in.BrandName, in.Category, in.CurrentDescription, in.Tags, in.Competitors, gapSection)
+			productRef, in.BrandName, in.Category, descSection, in.Tags, in.Competitors, gapSection)
 
 	case FixFAQ:
 		return fmt.Sprintf(`Generate 10 FAQ Q&A pairs for brand "%s" (category: %s) that a real buyer would ask about this store.

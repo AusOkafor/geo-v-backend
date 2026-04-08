@@ -85,23 +85,14 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		competitorNames = append(competitorNames, c.Name)
 	}
 
-	// Load synced products so description fixes can target a real product GID
-	products, err := store.GetProducts(ctx, w.db, merchant.ID)
-	if err != nil {
-		products = nil // non-fatal — fixes without a GID are still useful
-	}
-
 	// Load top query gaps from this merchant's actual scan data.
-	// These are the queries AI was asked where the merchant did NOT appear
-	// but competitors did — the most concrete signal of what content is missing.
 	queryGaps, _ := store.GetQueryGaps(ctx, w.db, merchant.ID)
 	missedQueries := make([]string, 0, len(queryGaps))
 	for _, g := range queryGaps {
 		missedQueries = append(missedQueries, g.Query)
 	}
 
-	// If no visibility scores exist yet (first scan, aggregation may not have run),
-	// treat all platforms as score=0 so fixes are still generated.
+	// If no visibility scores exist yet treat all platforms as score=0 so fixes are still generated.
 	if len(scores) == 0 {
 		scores = []store.VisibilityScore{
 			{Platform: "chatgpt", Score: 0},
@@ -110,21 +101,20 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		}
 	}
 
-	// Load store audit — nil if audit hasn't run yet (first install race or audit failed).
-	// When nil, all fixes are generated as before; no regressions for existing merchants.
+	// Load store audit — nil if audit hasn't run yet.
 	audit, _ := store.GetMerchantAudit(ctx, w.db, merchant.ID)
 
-	// Check which fix types already exist (any status except rejected)
+	// Check which fix types already have a pending/applied fix (skip re-generating those).
 	existingFixes, _ := store.GetFixes(ctx, w.db, merchant.ID, "")
 	existingTypes := map[fix.FixType]bool{}
-	existingTargets := map[string]bool{} // GIDs already targeted by a pending description fix
+	existingCollectionTargets := map[string]bool{} // collection GIDs already targeted
 	for _, f := range existingFixes {
 		if f.Status == "rejected" {
 			continue
 		}
 		existingTypes[fix.FixType(f.FixType)] = true
-		if fix.FixType(f.FixType) == fix.FixDescription && f.TargetGID != "" {
-			existingTargets[f.TargetGID] = true
+		if fix.FixType(f.FixType) == fix.FixCollectionDescription && f.TargetGID != "" {
+			existingCollectionTargets[f.TargetGID] = true
 		}
 	}
 
@@ -140,18 +130,16 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		return nil
 	}
 
-	// Fix generation order: structure first (schema → faq), then content (description).
-	// Structure fixes are the foundation — without them, content fixes have less impact.
-	// Layer 1: Schema — lets AI parse the catalog structure.
-	// Skip if the audit confirmed our schema metafield is already live on the store.
+	// ── Layer 1: Schema ────────────────────────────────────────────────────────
+	// Foundation fix — lets AI parse the catalog. Skip if already live.
 	schemaAlreadyLive := audit != nil && audit.SchemaLive
 	if !existingTypes[fix.FixSchema] && !schemaAlreadyLive {
 		result, err := w.generator.Generate(ctx, fix.GenerateInput{
-			BrandName:  merchant.BrandName,
-			Category:   merchant.Category,
+			BrandName:   merchant.BrandName,
+			Category:    merchant.Category,
 			Competitors: competitorNames,
-			FixType:    fix.FixSchema,
-			QueryGaps:  missedQueries,
+			FixType:     fix.FixSchema,
+			QueryGaps:   missedQueries,
 		})
 		if err == nil {
 			_, _ = store.InsertFix(ctx, w.db, store.Fix{
@@ -168,13 +156,12 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		}
 	}
 
-	// Layer 1: FAQ — matches the exact queries AI is asked.
-	// Skip if: merchant has real FAQs in our Settings, OR audit shows a live FAQ page on their store.
+	// ── Layer 1: FAQ action item ───────────────────────────────────────────────
+	// Direct merchants to add their real FAQs in Settings rather than AI-generating them.
 	if !existingTypes[fix.FixFAQ] {
 		merchantFAQs, _ := store.GetMerchantFAQs(ctx, w.db, merchant.ID)
 		hasFAQPage := audit != nil && audit.HasFAQPage
 		if len(merchantFAQs) == 0 && !hasFAQPage {
-			// No real FAQs yet — create a manual action item directing the merchant to add them.
 			actionPayload, _ := json.Marshal(map[string]string{
 				"action": "Add your store FAQs in Settings → FAQs. FAQs help AI assistants answer buyer questions about your shipping, returns, materials, and sizing — improving citation rates significantly.",
 			})
@@ -193,82 +180,96 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 			}
 			existingTypes[fix.FixFAQ] = true
 		}
-		// If merchant already has FAQs, skip — their real content is already live in the schema.
 	}
 
-	// Layer 2: Description — per-product fixes targeting specific missed queries.
-	// Skip if audit confirms descriptions are already high quality across the board.
-	// Threshold: avg >= 100 words AND no products with zero-word descriptions.
-	descriptionOK := audit != nil && audit.AvgDescriptionWords >= 100 && audit.ProductsWithNoDescription == 0
-
-	// If the audit signals description problems but the products table is empty,
-	// the product sync hasn't finished yet. Return an error so River retries after backoff,
-	// giving the sync time to complete before description fixes are attempted.
-	auditShowsDescriptionIssues := audit != nil && (audit.ProductsWithNoDescription > 0 || audit.ProductsWithShortDescription > 0 || audit.AvgDescriptionWords < 100)
-	if !descriptionOK && auditShowsDescriptionIssues && len(products) == 0 {
-		return fmt.Errorf("fix gen: product sync not yet complete for merchant %d — will retry", merchant.ID)
+	// ── Layer 2: Collection descriptions ──────────────────────────────────────
+	// AI-generated collection intros — high impact, low brand-sensitivity.
+	// Limit to top 3 collections by product count.
+	collections, _ := store.GetCollectionsEligibleForFix(ctx, w.db, merchant.ID)
+	const maxCollectionFixes = 3
+	collectionGenerated := 0
+	for _, c := range collections {
+		if collectionGenerated >= maxCollectionFixes {
+			break
+		}
+		if existingCollectionTargets[c.CollectionID] {
+			continue
+		}
+		result, err := w.generator.Generate(ctx, fix.GenerateInput{
+			BrandName:              merchant.BrandName,
+			Category:               merchant.Category,
+			Competitors:            competitorNames,
+			FixType:                fix.FixCollectionDescription,
+			CollectionTitle:        c.CollectionTitle,
+			CollectionProductCount: c.ProductCount,
+			QueryGaps:              missedQueries,
+		})
+		if err != nil {
+			slog.Warn("fix gen: collection description generation failed (non-fatal)",
+				"merchant_id", merchant.ID, "collection_id", c.CollectionID, "err", err)
+			continue
+		}
+		_, err = store.InsertFix(ctx, w.db, store.Fix{
+			MerchantID:  merchant.ID,
+			TargetGID:   c.CollectionID,
+			FixType:     string(fix.FixCollectionDescription),
+			FixLayer:    "content",
+			Priority:    "high",
+			Title:       result.Title,
+			Explanation: result.Explanation,
+			Generated:   result.Generated,
+			EstImpact:   fix.EstImpact(fix.FixCollectionDescription),
+		})
+		if err != nil {
+			return fmt.Errorf("fix gen: insert collection fix for %s: %w", c.CollectionID, err)
+		}
+		existingCollectionTargets[c.CollectionID] = true
+		collectionGenerated++
 	}
 
-	if !descriptionOK && len(products) > 0 {
-		// Sort: empty descriptions first (highest priority), then short ones.
-		// Products with good descriptions are moved to the back naturally since we
-		// only generate fixes for products that need them.
-		// Strip HTML before word counting to match the audit worker's behaviour
-		// (descriptions are stored as raw DescriptionHTML from Shopify).
-		emptyFirst := make([]store.Product, 0, len(products))
-		shortNext := make([]store.Product, 0, len(products))
-		for _, p := range products {
-			wordCount := len(strings.Fields(stripHTML(p.Description)))
-			if wordCount == 0 {
-				emptyFirst = append(emptyFirst, p)
-			} else if wordCount < 50 {
-				shortNext = append(shortNext, p)
-			}
+	// ── Layer 2: Page content ─────────────────────────────────────────────────
+	// AI-generated templates for About, Size Guide pages.
+	// One fix per missing page type — merchant fills in the specifics.
+	pageCandidates, _ := store.GetPagesEligibleForFix(ctx, w.db, merchant.ID)
+	for _, pg := range pageCandidates {
+		var ft fix.FixType
+		switch pg.PageType {
+		case "about":
+			ft = fix.FixAboutPage
+		case "size_guide":
+			ft = fix.FixSizeGuide
+		default:
+			continue // faq is handled above via action item
 		}
-		candidates := append(emptyFirst, shortNext...)
-
-		const maxDescFixes = 3
-		generated := 0
-		for i := range candidates {
-			if generated >= maxDescFixes {
-				break
-			}
-			p := &candidates[i]
-			if existingTargets[p.ShopifyGID] {
-				continue // already have a fix for this product
-			}
-			result, err := w.generator.Generate(ctx, fix.GenerateInput{
-				BrandName:          merchant.BrandName,
-				Category:           merchant.Category,
-				Competitors:        competitorNames,
-				FixType:            fix.FixDescription,
-				ProductTitle:       p.Title,
-				CurrentDescription: stripHTML(p.Description),
-				Tags:               p.Tags,
-				QueryGaps:          missedQueries,
-			})
-			if err != nil {
-				slog.Warn("fix gen: description generation failed (non-fatal)",
-					"merchant_id", merchant.ID, "product_gid", p.ShopifyGID, "err", err)
-				continue
-			}
-			_, err = store.InsertFix(ctx, w.db, store.Fix{
-				MerchantID:  merchant.ID,
-				TargetGID:   p.ShopifyGID,
-				FixType:     string(fix.FixDescription),
-				FixLayer:    "content",
-				Priority:    "high",
-				Title:       result.Title,
-				Explanation: result.Explanation,
-				Generated:   result.Generated,
-				EstImpact:   fix.EstImpact(fix.FixDescription),
-			})
-			if err != nil {
-				return fmt.Errorf("fix gen: insert description fix for %s: %w", p.ShopifyGID, err)
-			}
-			existingTargets[p.ShopifyGID] = true
-			generated++
+		if existingTypes[ft] {
+			continue
 		}
+		result, err := w.generator.Generate(ctx, fix.GenerateInput{
+			BrandName: merchant.BrandName,
+			Category:  merchant.Category,
+			FixType:   ft,
+			PageType:  pg.PageType,
+			QueryGaps: missedQueries,
+		})
+		if err != nil {
+			slog.Warn("fix gen: page content generation failed (non-fatal)",
+				"merchant_id", merchant.ID, "page_type", pg.PageType, "err", err)
+			continue
+		}
+		_, err = store.InsertFix(ctx, w.db, store.Fix{
+			MerchantID:  merchant.ID,
+			FixType:     string(ft),
+			FixLayer:    "content",
+			Priority:    "medium",
+			Title:       result.Title,
+			Explanation: result.Explanation,
+			Generated:   result.Generated,
+			EstImpact:   fix.EstImpact(ft),
+		})
+		if err != nil {
+			return fmt.Errorf("fix gen: insert %s fix: %w", ft, err)
+		}
+		existingTypes[ft] = true
 	}
 
 	return nil

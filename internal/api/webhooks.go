@@ -59,24 +59,31 @@ func (h *Handler) WebhookAppUninstalled(c echo.Context) error {
 
 func (h *Handler) WebhookProductsUpdate(c echo.Context) error {
 	return h.handleWebhook(c, "products/update", func(shopDomain string, _ []byte) error {
-		merchant, err := store.GetMerchantByDomain(c.Request().Context(), h.DB, shopDomain)
+		ctx := c.Request().Context()
+		merchant, err := store.GetMerchantByDomain(ctx, h.DB, shopDomain)
 		if err != nil {
 			return err
 		}
-		_, err = h.River.Insert(c.Request().Context(),
-			jobs.ProductSyncJobArgs{MerchantID: merchant.ID, Full: false}, nil)
+		// Sync the product catalogue and re-run the audit so progress metrics reflect the change.
+		if _, err = h.River.Insert(ctx, jobs.ProductSyncJobArgs{MerchantID: merchant.ID, Full: false}, nil); err != nil {
+			return err
+		}
+		_, err = h.River.Insert(ctx, jobs.OnboardingAuditJobArgs{MerchantID: merchant.ID}, nil)
 		return err
 	})
 }
 
 func (h *Handler) WebhookProductsCreate(c echo.Context) error {
 	return h.handleWebhook(c, "products/create", func(shopDomain string, _ []byte) error {
-		merchant, err := store.GetMerchantByDomain(c.Request().Context(), h.DB, shopDomain)
+		ctx := c.Request().Context()
+		merchant, err := store.GetMerchantByDomain(ctx, h.DB, shopDomain)
 		if err != nil {
 			return err
 		}
-		_, err = h.River.Insert(c.Request().Context(),
-			jobs.ProductSyncJobArgs{MerchantID: merchant.ID, Full: false}, nil)
+		if _, err = h.River.Insert(ctx, jobs.ProductSyncJobArgs{MerchantID: merchant.ID, Full: false}, nil); err != nil {
+			return err
+		}
+		_, err = h.River.Insert(ctx, jobs.OnboardingAuditJobArgs{MerchantID: merchant.ID}, nil)
 		return err
 	})
 }

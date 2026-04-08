@@ -21,23 +21,32 @@ const (
 type FixType string
 
 const (
-	FixDescription FixType = "description"
-	FixFAQ         FixType = "faq"
-	FixSchema      FixType = "schema"
-	FixListing     FixType = "listing"
+	FixDescription          FixType = "description"           // deprecated — product descriptions only
+	FixFAQ                  FixType = "faq"
+	FixSchema               FixType = "schema"
+	FixListing              FixType = "listing"
+	FixCollectionDescription FixType = "collection_description" // AI-generated collection intro
+	FixAboutPage            FixType = "about_page"             // About Us template
+	FixSizeGuide            FixType = "size_guide"             // Size guide template
 )
 
 // EstImpact returns the estimated visibility improvement for each fix type.
 func EstImpact(t FixType) int {
 	switch t {
-	case FixDescription:
-		return 23
+	case FixCollectionDescription:
+		return 25
 	case FixFAQ:
 		return 18
+	case FixAboutPage:
+		return 15
+	case FixSizeGuide:
+		return 12
 	case FixListing:
 		return 12
 	case FixSchema:
 		return 8
+	case FixDescription:
+		return 23
 	}
 	return 5
 }
@@ -54,6 +63,11 @@ type GenerateInput struct {
 	// QueryGaps are the specific queries the merchant is missing from in AI results.
 	// Injected so generated content directly targets real missed buyer intent.
 	QueryGaps []string
+	// Collection-specific fields
+	CollectionTitle        string
+	CollectionProductCount int
+	// Page-specific fields
+	PageType string // about_page | size_guide (faq uses FixFAQ)
 }
 
 // GenerateResult is the parsed output from Claude.
@@ -243,6 +257,48 @@ The listing copy should answer the missed queries above so that when directories
 
 Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility", "generated": {"listing": "..."}}`,
 			in.BrandName, in.Category, gapSection)
+
+	case FixCollectionDescription:
+		return fmt.Sprintf(`Write a collection description for "%s", a collection of %d products from the brand "%s" (category: %s).%s
+
+Requirements:
+- 80–120 words, plain HTML with <p> tags only — no headers
+- Introduce what the collection contains and who it is for
+- Use natural, browsable language — not keyword stuffing
+- Do NOT mention specific product names, prices, or availability
+- Do NOT use superlatives: no "best", "top", "premium", "exclusive"
+- Do NOT mention the brand name more than once
+
+Return JSON: {"title": "Add description to %s collection", "explanation": "Collection descriptions help AI cite your category pages when shoppers ask for product recommendations", "generated": {"description": "<p>...</p>"}}`,
+			in.CollectionTitle, in.CollectionProductCount, in.BrandName, in.Category, gapSection, in.CollectionTitle)
+
+	case FixAboutPage:
+		return fmt.Sprintf(`Write an About Us page template for brand "%s" (category: %s).%s
+
+Requirements:
+- 200–300 words total across 3 sections
+- Section 1 "Our Story": origin, motivation, founding moment — use [brackets] for facts the merchant must fill in (e.g. "[year founded]", "[city]")
+- Section 2 "What We Make": describe the product category and what makes the craft distinct — keep generic enough that the merchant only needs to edit a few details
+- Section 3 "Our Values": 2–3 sentences on quality, customer focus, or community — no unverifiable sustainability claims
+- Format: HTML with <h2> and <p> tags
+- Do NOT claim certifications, sourcing transparency, or specific awards
+
+Return JSON: {"title": "Add an About Us page to build brand trust", "explanation": "An About page helps AI assistants verify the brand is real and establish trust when recommending it", "generated": {"content": "<h2>Our Story</h2><p>...</p>"}}`,
+			in.BrandName, in.Category, gapSection)
+
+	case FixSizeGuide:
+		return fmt.Sprintf(`Write a size guide template for brand "%s" (category: %s).
+
+Requirements:
+- Provide a measurement guide section explaining how to measure chest, waist, and hips (or equivalent for the category)
+- Include a simple HTML table with columns: Size | Chest | Waist | Hips (or relevant measurements for %s)
+- Add a brief note that sizes vary and to contact the brand if unsure
+- Format: HTML with <h2>, <p>, and <table> tags
+- Use placeholder values like "34–36 in" so the merchant edits real measurements — do NOT invent precise numbers
+- 150–250 words total
+
+Return JSON: {"title": "Add a size guide to reduce returns and improve AI recommendations", "explanation": "A size guide helps AI assistants answer sizing questions and recommend your products with confidence", "generated": {"content": "<h2>How to Measure</h2><p>...</p><table>...</table>"}}`,
+			in.BrandName, in.Category, in.Category)
 	}
 
 	return fmt.Sprintf(`Improve AI visibility for brand "%s". Return JSON with title, explanation, and generated fields.`, in.BrandName)

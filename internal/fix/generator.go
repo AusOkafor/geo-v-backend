@@ -171,9 +171,17 @@ Current description: %s
 Tags: %v
 Top competitors AI cites instead: %v%s
 
-The description MUST naturally answer the missed queries above so AI can match this product to those buyer intents.
+The description must naturally cover the buyer intents behind the missed queries — not by stuffing keywords, but by actually answering what a shopper would want to know.
 
-Return JSON: {"title": "Fix title", "explanation": "Why this improves AI visibility (mention the specific queries it targets)", "generated": {"description": "800-1000 word HTML description with brand name 3-4x, semantic headings, embedded FAQ, material/dimension specifics"}}`,
+Requirements:
+- 600-900 words, HTML format with <h2> and <p> tags
+- Cover: what the product is, who it's for, key materials/features, use cases, fit or sizing guidance if relevant
+- Write in a natural brand voice — do NOT repeat the brand name more than twice
+- Do NOT mention SEO, keyword density, AI optimization, or visibility tactics
+- Do NOT invent certifications, materials, or claims that aren't verifiable from the current description or tags
+- The explanation field must describe what the description covers and why it helps buyers find the product — never reference internal tactics like "brand name repetition" or "semantic structure"
+
+Return JSON: {"title": "Fix title", "explanation": "What this description covers and how it helps shoppers find the right product", "generated": {"description": "HTML product description"}}`,
 			in.BrandName, in.Category, in.CurrentDescription, in.Tags, in.Competitors, gapSection)
 
 	case FixFAQ:

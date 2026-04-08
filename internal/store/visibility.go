@@ -702,7 +702,12 @@ func GetNextActions(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 		WHERE merchant_id = $1 AND fix_type = 'faq' AND status IN ('applied','manual','pending','approved')
 	`, merchantID).Scan(&faqCount)
 
-	missingSchema := schemaCount == 0
+	// Also check the onboarding audit — when schema is already live on the store
+	// we skip creating a schema fix record, so schemaCount == 0 even though schema exists.
+	var auditSchemaLive bool
+	_ = db.QueryRow(ctx, `SELECT schema_live FROM merchant_audit WHERE merchant_id = $1`, merchantID).Scan(&auditSchemaLive)
+
+	missingSchema := schemaCount == 0 && !auditSchemaLive
 	missingFAQ := faqCount == 0
 
 	// Action 1 — structural blocker: schema if missing, otherwise FAQ

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/austinokafor/geo-backend/internal/crypto"
@@ -13,16 +14,17 @@ import (
 )
 
 // OnboardingAuditWorker reads the merchant's live Shopify store state and
-// persists results to merchant_audit. FixGenerationWorker reads this table
-// to skip recommendations for things the merchant already has in place.
+// persists results to merchant_audit. After completing it queues fix generation
+// so the merchant sees fixes immediately after install without needing a scan first.
 type OnboardingAuditWorker struct {
 	river.WorkerDefaults[OnboardingAuditJobArgs]
 	db            *pgxpool.Pool
 	encryptionKey []byte
+	riverClient   *river.Client[pgx.Tx]
 }
 
-func NewOnboardingAuditWorker(db *pgxpool.Pool, encKey []byte) *OnboardingAuditWorker {
-	return &OnboardingAuditWorker{db: db, encryptionKey: encKey}
+func NewOnboardingAuditWorker(db *pgxpool.Pool, encKey []byte, riverClient *river.Client[pgx.Tx]) *OnboardingAuditWorker {
+	return &OnboardingAuditWorker{db: db, encryptionKey: encKey, riverClient: riverClient}
 }
 
 func (w *OnboardingAuditWorker) Work(ctx context.Context, job *river.Job[OnboardingAuditJobArgs]) error {
@@ -100,6 +102,15 @@ func (w *OnboardingAuditWorker) Work(ctx context.Context, job *river.Job[Onboard
 		"has_faq_page", audit.HasFAQPage,
 		"review_app", audit.ReviewApp,
 	)
+
+	// Queue fix generation so the merchant sees actionable fixes immediately after
+	// install — without needing to trigger a full AI scan first.
+	// The fix worker will retry automatically if product sync is still in progress.
+	if _, err := w.riverClient.Insert(ctx, FixGenerationJobArgs{MerchantID: merchantID}, nil); err != nil {
+		slog.Warn("onboarding audit: failed to queue fix generation (non-fatal)",
+			"merchant_id", merchantID, "err", err)
+	}
+
 	return nil
 }
 

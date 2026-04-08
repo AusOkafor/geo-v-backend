@@ -170,6 +170,46 @@ func DeactivateMerchant(ctx context.Context, db *pgxpool.Pool, domain string) er
 	return nil
 }
 
+// ResetMerchantData clears all scan history, fixes, and settings for a merchant
+// but keeps the merchant row and Shopify connection intact.
+// Used by the merchant-initiated "Delete all my data" action in Settings.
+func ResetMerchantData(ctx context.Context, db *pgxpool.Pool, merchantID int64) error {
+	tables := []string{
+		"citation_records",
+		"citation_verifications",
+		"pending_fixes",
+		"spot_checks",
+		"validation_runs",
+		"accuracy_metrics",
+		"response_stability",
+		"scan_costs",
+		"visibility_scores",
+		"products",
+		"merchant_faqs",
+	}
+	for _, t := range tables {
+		if _, err := db.Exec(ctx, `DELETE FROM `+t+` WHERE merchant_id = $1`, merchantID); err != nil {
+			return fmt.Errorf("reset merchant data: clear %s: %w", t, err)
+		}
+	}
+	// Reset editable merchant fields but keep the connection.
+	_, err := db.Exec(ctx, `
+		UPDATE merchants SET
+			brand_name              = NULL,
+			category                = NULL,
+			social_links            = '{}',
+			review_app              = NULL,
+			review_app_key          = NULL,
+			avg_rating              = NULL,
+			total_reviews           = 0,
+			review_schema_injected  = false,
+			reviews_last_scanned_at = NULL,
+			updated_at              = NOW()
+		WHERE id = $1
+	`, merchantID)
+	return err
+}
+
 // DeleteMerchantData removes all data associated with a shop domain (GDPR).
 func DeleteMerchantData(ctx context.Context, db *pgxpool.Pool, domain string) error {
 	_, err := db.Exec(ctx, `

@@ -338,6 +338,22 @@ func (h *Handler) TriggerSync(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "queued"})
 }
 
+// DeleteMerchantData clears all scan history, fixes, and settings for the
+// authenticated merchant while keeping their Shopify connection intact.
+// DELETE /api/merchant/data
+func (h *Handler) DeleteMerchantData(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	if err := store.ResetMerchantData(c.Request().Context(), h.DB, m.ID); err != nil {
+		slog.Error("DeleteMerchantData: failed", "merchant_id", m.ID, "err", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to reset data")
+	}
+	slog.Info("DeleteMerchantData: reset complete", "merchant_id", m.ID)
+	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 func (h *Handler) GetVisibilityPipeline(c echo.Context) error {
 	m, err := h.getAuthMerchant(c)
 	if err != nil {

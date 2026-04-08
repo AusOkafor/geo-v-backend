@@ -162,31 +162,33 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		}
 	}
 
-	// Layer 1: FAQ — matches the exact queries AI is asked
+	// Layer 1: FAQ — matches the exact queries AI is asked.
+	// Only create this fix if the merchant has not already added their own FAQs in Settings.
+	// Generated AI FAQs contain placeholder guesses the merchant cannot verify — real FAQs
+	// must come from the merchant. If none exist, surface an action item pointing to Settings.
 	if !existingTypes[fix.FixFAQ] {
-		result, err := w.generator.Generate(ctx, fix.GenerateInput{
-			BrandName:  merchant.BrandName,
-			Category:   merchant.Category,
-			Competitors: competitorNames,
-			FixType:    fix.FixFAQ,
-			QueryGaps:  missedQueries,
-		})
-		if err == nil {
-			_, err = store.InsertFix(ctx, w.db, store.Fix{
+		merchantFAQs, _ := store.GetMerchantFAQs(ctx, w.db, merchant.ID)
+		if len(merchantFAQs) == 0 {
+			// No real FAQs yet — create a manual action item directing the merchant to add them.
+			actionPayload, _ := json.Marshal(map[string]string{
+				"action": "Add your store FAQs in Settings → FAQs. FAQs help AI assistants answer buyer questions about your shipping, returns, materials, and sizing — improving citation rates significantly.",
+			})
+			_, err := store.InsertFix(ctx, w.db, store.Fix{
 				MerchantID:  merchant.ID,
 				FixType:     string(fix.FixFAQ),
 				FixLayer:    "structure",
 				Priority:    "high",
-				Title:       result.Title,
-				Explanation: result.Explanation,
-				Generated:   result.Generated,
+				Title:       "Add store FAQs to improve AI citation rates",
+				Explanation: "AI assistants frequently answer questions about shipping, returns, materials, and sizing. Stores with factual FAQ schema are cited up to 2× more often. Go to Settings → FAQs to add your real store policies.",
+				Generated:   actionPayload,
 				EstImpact:   fix.EstImpact(fix.FixFAQ),
 			})
 			if err != nil {
-				return fmt.Errorf("fix gen: insert faq fix: %w", err)
+				return fmt.Errorf("fix gen: insert faq action fix: %w", err)
 			}
 			existingTypes[fix.FixFAQ] = true
 		}
+		// If merchant already has FAQs, skip — their real content is already live in the schema.
 	}
 
 	// Layer 2: Description — content targeting specific missed queries
@@ -354,8 +356,22 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 		}
 
 	case fix.FixFAQ:
-		// Validate FAQ content before embedding in schema.
-		// Self-promotional or thin answers are flagged as low-trust by AI assistants.
+		// Action-item fix: merchant needs to add FAQs in Settings.
+		// Generated contains {"action": "..."} not a faqs array — approving it just
+		// confirms they've seen the prompt. The schema rebuild will pick up real FAQs
+		// from merchant_faqs once the merchant adds them.
+		var actionCheck struct {
+			Action string `json:"action"`
+		}
+		if err := json.Unmarshal(f.Generated, &actionCheck); err == nil && actionCheck.Action != "" {
+			// Action-item fix — mark applied and trigger schema rebuild (uses real FAQs if any).
+			if err := store.SetFixStatus(ctx, w.db, f.ID, "applied"); err != nil {
+				return err
+			}
+			_, _ = w.riverClient.Insert(ctx, SchemaRebuildJobArgs{MerchantID: job.Args.MerchantID}, nil)
+			return nil
+		}
+		// Legacy path: fix contains generated FAQ pairs — validate and embed.
 		var faqGen struct {
 			FAQs []struct {
 				Question string `json:"question"`
@@ -371,8 +387,6 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 				"fix_id", f.ID, "err", err)
 			return store.SetFixStatus(ctx, w.db, f.ID, "failed")
 		}
-		// FAQ Q&A pairs are embedded into the schema as a FAQPage entity.
-		// Mark as applied and rebuild schema so the FAQPage appears in @graph immediately.
 		if err := store.SetFixStatus(ctx, w.db, f.ID, "applied"); err != nil {
 			return err
 		}

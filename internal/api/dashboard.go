@@ -492,6 +492,11 @@ func (h *Handler) UpdateMerchantFAQs(c echo.Context) error {
 		return err
 	}
 
+	// Auto-resolve the pending FAQ action-item fix when the merchant saves real FAQs.
+	if len(clean) > 0 {
+		_ = store.ApplyPendingFixByType(c.Request().Context(), h.DB, m.ID, "faq")
+	}
+
 	// Trigger schema rebuild so FAQPage reflects the new Q&As immediately.
 	_, _ = h.River.Insert(c.Request().Context(), jobs.SchemaRebuildJobArgs{MerchantID: m.ID}, nil)
 

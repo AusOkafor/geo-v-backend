@@ -140,6 +140,19 @@ func InsertFix(ctx context.Context, db *pgxpool.Pool, f Fix) (int64, error) {
 }
 
 // SetFixStatus updates the status (and optionally applied_at) of a fix.
+// ApplyPendingFixByType marks the first pending fix of a given type as applied.
+// Used to auto-resolve action-item fixes when the merchant completes the action
+// (e.g. auto-apply the FixFAQ action fix when they save FAQs in Settings).
+// Non-fatal if no matching fix exists.
+func ApplyPendingFixByType(ctx context.Context, db *pgxpool.Pool, merchantID int64, fixType string) error {
+	_, err := db.Exec(ctx, `
+		UPDATE pending_fixes
+		SET status = 'applied', applied_at = now(), updated_at = now()
+		WHERE merchant_id = $1 AND fix_type = $2 AND status = 'pending'
+	`, merchantID, fixType)
+	return err
+}
+
 func SetFixStatus(ctx context.Context, db *pgxpool.Pool, fixID int64, status string) error {
 	if status == "applied" {
 		_, err := db.Exec(ctx, `

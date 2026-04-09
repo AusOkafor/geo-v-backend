@@ -310,6 +310,38 @@ func (h *Handler) GetScanStatus(c echo.Context) error {
 	})
 }
 
+func (h *Handler) CancelScan(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+
+	// Find the most recent active scan job for this merchant.
+	// river_jobs states that can be cancelled: available, running, scheduled, retryable.
+	var jobID int64
+	err = h.DB.QueryRow(c.Request().Context(), `
+		SELECT id
+		FROM river_jobs
+		WHERE kind = 'scan'
+		  AND (args->>'merchant_id')::bigint = $1
+		  AND state IN ('available', 'running', 'scheduled', 'retryable', 'pending')
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, m.ID).Scan(&jobID)
+	if err != nil {
+		// No active scan job — nothing to cancel
+		return c.JSON(http.StatusOK, map[string]string{"status": "no_active_scan"})
+	}
+
+	if _, err := h.River.JobCancel(c.Request().Context(), jobID); err != nil {
+		slog.Warn("CancelScan: failed to cancel job", "job_id", jobID, "merchant_id", m.ID, "err", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to cancel scan")
+	}
+
+	slog.Info("CancelScan: scan cancelled", "job_id", jobID, "merchant_id", m.ID)
+	return c.JSON(http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
 func (h *Handler) TriggerScan(c echo.Context) error {
 	m, err := h.getAuthMerchant(c)
 	if err != nil {

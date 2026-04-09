@@ -70,6 +70,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	api.GET("/schema/status", h.GetSchemaStatus)
 	api.GET("/scans/status", h.GetScanStatus)
 	api.POST("/scans", h.TriggerScan)
+	api.DELETE("/scans", h.CancelScan)
 	api.POST("/sync", h.TriggerSync)
 	api.DELETE("/merchant/data", h.DeleteMerchantData)
 	api.GET("/verify-response", h.VerifyResponseIntegrity)

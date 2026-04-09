@@ -155,8 +155,9 @@ func (w *OnboardingAuditWorker) Work(ctx context.Context, job *river.Job[Onboard
 		slog.Warn("onboarding audit: page fetch failed (non-fatal)", "merchant_id", merchantID, "err", err)
 	}
 
-	// Track which essential types were found
+	// Track which essential types were found; count existing pages that need attention.
 	foundPageTypes := map[string]bool{}
+	pagesNeedingAttention := 0
 	for _, pg := range pages {
 		pt := classifyPage(pg.Title, pg.Handle)
 		if pt == "other" {
@@ -165,6 +166,11 @@ func (w *OnboardingAuditWorker) Work(ctx context.Context, job *river.Job[Onboard
 		foundPageTypes[pt] = true
 		body := stripHTML(pg.Body)
 		wc := len(strings.Fields(body))
+		needsAttn := wc < 100
+
+		if needsAttn {
+			pagesNeedingAttention++
+		}
 
 		pa := &store.PageAudit{
 			MerchantID:        merchantID,
@@ -177,7 +183,7 @@ func (w *OnboardingAuditWorker) Work(ctx context.Context, job *river.Job[Onboard
 			AboutHasStory:     containsAny(body, storyKeywords),
 			AboutHasTeam:      containsAny(body, teamKeywords),
 			AIContentEligible: pt == "faq" || pt == "about" || pt == "size_guide",
-			NeedsAttention:    wc < 100,
+			NeedsAttention:    needsAttn,
 			IsPlaceholder:     false,
 		}
 		if err := store.UpsertPageAudit(ctx, w.db, pa); err != nil {
@@ -185,7 +191,7 @@ func (w *OnboardingAuditWorker) Work(ctx context.Context, job *river.Job[Onboard
 		}
 	}
 
-	// Create placeholder records for missing essential pages so fix worker can target them
+	// Create placeholder records for missing essential pages so fix worker can target them.
 	essentialPages := []struct {
 		pageType string
 		title    string
@@ -194,7 +200,6 @@ func (w *OnboardingAuditWorker) Work(ctx context.Context, job *river.Job[Onboard
 		{"about", "About Us"},
 		{"size_guide", "Size Guide"},
 	}
-	pagesNeedingAttention := 0
 	for _, ep := range essentialPages {
 		if !foundPageTypes[ep.pageType] {
 			pagesNeedingAttention++
@@ -227,14 +232,23 @@ func (w *OnboardingAuditWorker) Work(ctx context.Context, job *river.Job[Onboard
 	}
 
 	// ── 9. Persist progress snapshot ──────────────────────────────────────────
+	// Total pages = found classified pages + missing essential placeholders
+	missingEssentialPages := 0
+	for _, ep := range essentialPages {
+		if !foundPageTypes[ep.pageType] {
+			missingEssentialPages++
+		}
+	}
+	totalPagesAudited := len(foundPageTypes) + missingEssentialPages
+
 	progress := &store.AuditProgress{
-		MerchantID:                merchantID,
-		TotalProducts:             len(products),
-		ProductsNeedingAttention:  productsNeedingAttention,
-		TotalCollections:          len(collections),
+		MerchantID:                  merchantID,
+		TotalProducts:               len(products),
+		ProductsNeedingAttention:    productsNeedingAttention,
+		TotalCollections:            len(collections),
 		CollectionsNeedingAttention: collectionsNeedingAttention,
-		TotalPagesAudited:         len(foundPageTypes),
-		PagesNeedingAttention:     pagesNeedingAttention,
+		TotalPagesAudited:           totalPagesAudited,
+		PagesNeedingAttention:       pagesNeedingAttention,
 	}
 	if total := len(products) + len(collections) + len(foundPageTypes); total > 0 {
 		fixed := total - productsNeedingAttention - collectionsNeedingAttention - pagesNeedingAttention

@@ -409,27 +409,49 @@ func UpsertScanCost(ctx context.Context, db *pgxpool.Pool, merchantID int64, pla
 }
 
 // UpsertVisibilityScores aggregates today's citation_records into visibility_scores.
+//
+// Scoring rules (Phase 1 + Phase 2):
+//   - positive mention  → weight 1.0  (counts fully)
+//   - neutral mention   → weight 0.5  (counts half)
+//   - negative mention  → weight 0.0  (excluded from score, stored in negative_mentions)
+//   - not mentioned     → weight 0.0
+//
+// score = SUM(weights) / total_queries * 100, rounded to nearest integer.
+// queries_hit reflects only positive+neutral mentions so the number is consistent with the score.
 func UpsertVisibilityScores(ctx context.Context, db *pgxpool.Pool, merchantID int64) error {
 	_, err := db.Exec(ctx, `
-		INSERT INTO visibility_scores (merchant_id, platform, score_date, score, queries_run, queries_hit)
+		INSERT INTO visibility_scores
+			(merchant_id, platform, score_date, score, queries_run, queries_hit, valid_mentions, negative_mentions)
 		SELECT
 			merchant_id,
 			platform,
 			CURRENT_DATE,
+			-- Sentiment-weighted score: positive=1.0, neutral=0.5, negative=0.0
 			CASE WHEN COUNT(*) = 0 THEN 0
-			     ELSE ROUND(SUM(CASE WHEN mentioned THEN 1 ELSE 0 END)::numeric / COUNT(*) * 100)
+			     ELSE ROUND(
+			         SUM(CASE
+			             WHEN mentioned AND sentiment = 'positive'                     THEN 1.0
+			             WHEN mentioned AND (sentiment = 'neutral' OR sentiment = '')  THEN 0.5
+			             ELSE 0.0
+			         END)::numeric / COUNT(*) * 100
+			     )
 			END::smallint AS score,
 			COUNT(*)::int AS queries_run,
-			SUM(CASE WHEN mentioned THEN 1 ELSE 0 END)::int AS queries_hit
+			-- queries_hit = positive + neutral mentions only (consistent with score)
+			SUM(CASE WHEN mentioned AND (sentiment IS NULL OR sentiment != 'negative') THEN 1 ELSE 0 END)::int AS queries_hit,
+			SUM(CASE WHEN mentioned AND (sentiment IS NULL OR sentiment != 'negative') THEN 1 ELSE 0 END)::int AS valid_mentions,
+			SUM(CASE WHEN mentioned AND sentiment = 'negative'                         THEN 1 ELSE 0 END)::int AS negative_mentions
 		FROM citation_records
 		WHERE merchant_id = $1
 		  AND scanned_at = CURRENT_DATE
 		GROUP BY merchant_id, platform
 		ON CONFLICT (merchant_id, platform, score_date)
 		DO UPDATE SET
-			score       = EXCLUDED.score,
-			queries_run = EXCLUDED.queries_run,
-			queries_hit = EXCLUDED.queries_hit
+			score              = EXCLUDED.score,
+			queries_run        = EXCLUDED.queries_run,
+			queries_hit        = EXCLUDED.queries_hit,
+			valid_mentions     = EXCLUDED.valid_mentions,
+			negative_mentions  = EXCLUDED.negative_mentions
 	`, merchantID)
 	return err
 }

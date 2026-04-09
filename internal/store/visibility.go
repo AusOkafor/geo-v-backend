@@ -13,11 +13,12 @@ import (
 
 // VisibilityScore mirrors visibility_scores for API responses.
 type VisibilityScore struct {
-	Platform   string    `json:"platform"`
-	Score      int       `json:"score"`
-	QueriesRun int       `json:"queries_run"`
-	QueriesHit int       `json:"queries_hit"`
-	ScoreDate  time.Time `json:"score_date"`
+	Platform         string    `json:"platform"`
+	Score            int       `json:"score"`
+	QueriesRun       int       `json:"queries_run"`
+	QueriesHit       int       `json:"queries_hit"`
+	NegativeMentions int       `json:"negative_mentions"`
+	ScoreDate        time.Time `json:"score_date"`
 }
 
 // DailyScore is used for the trend chart (one row per day per platform aggregated to date).
@@ -138,7 +139,7 @@ type rawCompetitorRow struct {
 func GetVisibilityScores(ctx context.Context, db *pgxpool.Pool, merchantID int64, days int) ([]VisibilityScore, error) {
 	rows, err := db.Query(ctx, `
 		SELECT DISTINCT ON (platform)
-			platform, score, queries_run, queries_hit, score_date
+			platform, score, queries_run, queries_hit, negative_mentions, score_date
 		FROM visibility_scores
 		WHERE merchant_id = $1
 		  AND score_date >= CURRENT_DATE - make_interval(days => $2)
@@ -152,7 +153,7 @@ func GetVisibilityScores(ctx context.Context, db *pgxpool.Pool, merchantID int64
 	var scores []VisibilityScore
 	for rows.Next() {
 		var s VisibilityScore
-		if err := rows.Scan(&s.Platform, &s.Score, &s.QueriesRun, &s.QueriesHit, &s.ScoreDate); err != nil {
+		if err := rows.Scan(&s.Platform, &s.Score, &s.QueriesRun, &s.QueriesHit, &s.NegativeMentions, &s.ScoreDate); err != nil {
 			return nil, err
 		}
 		scores = append(scores, s)

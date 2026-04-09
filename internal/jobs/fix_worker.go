@@ -227,6 +227,33 @@ func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenera
 		collectionGenerated++
 	}
 
+	// ── Layer 3: Authority — Google Merchant Center ───────────────────────────
+	// Gemini uses Merchant Center to verify business legitimacy.
+	// Generate a setup fix if not connected and no existing fix for this type.
+	if !existingTypes[fix.FixMerchantCenter] {
+		if audit == nil || !audit.GoogleMerchantCenterConnected {
+			generated, _ := json.Marshal(map[string]string{
+				"action_url": "https://apps.shopify.com/google",
+				"app_name":   "Google & YouTube",
+				"description": "Install the Google & YouTube app from the Shopify App Store, connect your Google account, and set up a product feed. Once connected, Gemini can verify your business and access accurate product data.",
+			})
+			_, err := store.InsertFix(ctx, w.db, store.Fix{
+				MerchantID:  merchant.ID,
+				FixType:     string(fix.FixMerchantCenter),
+				FixLayer:    "authority",
+				Priority:    "high",
+				Title:       "Connect Google Merchant Center",
+				Explanation: "Gemini (Google's AI) uses Merchant Center to verify that your store is a legitimate business. Connected stores are cited more frequently in Google AI Overviews and shopping recommendations. Setup takes under 15 minutes.",
+				Generated:   generated,
+				EstImpact:   fix.EstImpact(fix.FixMerchantCenter),
+			})
+			if err != nil {
+				return fmt.Errorf("fix gen: insert merchant_center fix: %w", err)
+			}
+			existingTypes[fix.FixMerchantCenter] = true
+		}
+	}
+
 	// ── Layer 2: Page content ─────────────────────────────────────────────────
 	// AI-generated templates for About, Size Guide pages.
 	// One fix per missing page type — merchant fills in the specifics.

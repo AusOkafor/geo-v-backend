@@ -21,13 +21,14 @@ const (
 type FixType string
 
 const (
-	FixDescription          FixType = "description"           // deprecated — product descriptions only
-	FixFAQ                  FixType = "faq"
-	FixSchema               FixType = "schema"
-	FixListing              FixType = "listing"
+	FixDescription           FixType = "description"            // deprecated — product descriptions only
+	FixFAQ                   FixType = "faq"
+	FixSchema                FixType = "schema"
+	FixListing               FixType = "listing"
 	FixCollectionDescription FixType = "collection_description" // AI-generated collection intro
-	FixAboutPage            FixType = "about_page"             // About Us template
-	FixSizeGuide            FixType = "size_guide"             // Size guide template
+	FixAboutPage             FixType = "about_page"             // About Us template
+	FixSizeGuide             FixType = "size_guide"             // Size guide template
+	FixMerchantCenter        FixType = "merchant_center_setup"  // Connect Google Merchant Center
 )
 
 // EstImpact returns the estimated visibility improvement for each fix type.
@@ -37,6 +38,8 @@ func EstImpact(t FixType) int {
 		return 25
 	case FixFAQ:
 		return 18
+	case FixMerchantCenter:
+		return 17 // high Gemini signal — legitimacy verification
 	case FixAboutPage:
 		return 15
 	case FixSizeGuide:

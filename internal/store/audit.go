@@ -21,6 +21,8 @@ type MerchantAudit struct {
 	ProductsWithShortDescription int    // products with < 50-word descriptions
 	HasFAQPage                   bool   // merchant has a Shopify page titled/handled "faq"
 	ReviewApp                    string // detected review app slug, or "" if none
+	GoogleMerchantCenterConnected bool   // Google & YouTube app installed → Merchant Center linked
+	GoogleProductFeedActive       bool   // product feed is actively syncing to Google
 	AuditedAt                    time.Time
 }
 
@@ -31,12 +33,17 @@ func GetMerchantAudit(ctx context.Context, db *pgxpool.Pool, merchantID int64) (
 	err := db.QueryRow(ctx, `
 		SELECT id, merchant_id, schema_live, avg_description_words,
 		       products_with_no_description, products_with_short_description,
-		       has_faq_page, review_app, audited_at
+		       has_faq_page, review_app,
+		       COALESCE(google_merchant_center_connected, FALSE),
+		       COALESCE(google_product_feed_active, FALSE),
+		       audited_at
 		FROM merchant_audit WHERE merchant_id = $1
 	`, merchantID).Scan(
 		&a.ID, &a.MerchantID, &a.SchemaLive, &a.AvgDescriptionWords,
 		&a.ProductsWithNoDescription, &a.ProductsWithShortDescription,
-		&a.HasFAQPage, &a.ReviewApp, &a.AuditedAt,
+		&a.HasFAQPage, &a.ReviewApp,
+		&a.GoogleMerchantCenterConnected, &a.GoogleProductFeedActive,
+		&a.AuditedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -53,19 +60,24 @@ func UpsertMerchantAudit(ctx context.Context, db *pgxpool.Pool, a *MerchantAudit
 		INSERT INTO merchant_audit
 			(merchant_id, schema_live, avg_description_words,
 			 products_with_no_description, products_with_short_description,
-			 has_faq_page, review_app, audited_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+			 has_faq_page, review_app,
+			 google_merchant_center_connected, google_product_feed_active,
+			 audited_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
 		ON CONFLICT (merchant_id) DO UPDATE SET
-			schema_live                     = EXCLUDED.schema_live,
-			avg_description_words           = EXCLUDED.avg_description_words,
-			products_with_no_description    = EXCLUDED.products_with_no_description,
-			products_with_short_description = EXCLUDED.products_with_short_description,
-			has_faq_page                    = EXCLUDED.has_faq_page,
-			review_app                      = EXCLUDED.review_app,
-			audited_at                      = now()
+			schema_live                        = EXCLUDED.schema_live,
+			avg_description_words              = EXCLUDED.avg_description_words,
+			products_with_no_description       = EXCLUDED.products_with_no_description,
+			products_with_short_description    = EXCLUDED.products_with_short_description,
+			has_faq_page                       = EXCLUDED.has_faq_page,
+			review_app                         = EXCLUDED.review_app,
+			google_merchant_center_connected   = EXCLUDED.google_merchant_center_connected,
+			google_product_feed_active         = EXCLUDED.google_product_feed_active,
+			audited_at                         = now()
 	`, a.MerchantID, a.SchemaLive, a.AvgDescriptionWords,
 		a.ProductsWithNoDescription, a.ProductsWithShortDescription,
 		a.HasFAQPage, a.ReviewApp,
+		a.GoogleMerchantCenterConnected, a.GoogleProductFeedActive,
 	)
 	if err != nil {
 		return fmt.Errorf("store.UpsertMerchantAudit: %w", err)

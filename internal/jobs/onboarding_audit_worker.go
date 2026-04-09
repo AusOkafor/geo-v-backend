@@ -212,12 +212,21 @@ func (w *OnboardingAuditWorker) Work(ctx context.Context, job *river.Job[Onboard
 		}
 	}
 
-	// ── 7. Persist aggregate audit ─────────────────────────────────────────────
+	// ── 7. Google Merchant Center ──────────────────────────────────────────────
+	mcStatus, err := shopify.CheckMerchantCenterStatus(ctx, merchant.ShopDomain, token)
+	if err != nil {
+		slog.Warn("onboarding audit: merchant center check failed (non-fatal)", "merchant_id", merchantID, "err", err)
+	} else if mcStatus != nil {
+		audit.GoogleMerchantCenterConnected = mcStatus.Connected
+		audit.GoogleProductFeedActive = mcStatus.ProductFeedActive
+	}
+
+	// ── 8. Persist aggregate audit ─────────────────────────────────────────────
 	if err := store.UpsertMerchantAudit(ctx, w.db, audit); err != nil {
 		return err
 	}
 
-	// ── 8. Persist progress snapshot ──────────────────────────────────────────
+	// ── 9. Persist progress snapshot ──────────────────────────────────────────
 	progress := &store.AuditProgress{
 		MerchantID:                merchantID,
 		TotalProducts:             len(products),

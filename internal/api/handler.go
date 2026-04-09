@@ -61,6 +61,9 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	api.GET("/fixes/:id", h.GetFix)
 	api.POST("/fixes/:id/approve", h.ApproveFix)
 	api.POST("/fixes/:id/reject", h.RejectFix)
+	api.GET("/external-mentions", h.GetExternalMentions)
+	api.GET("/external-mentions/stats", h.GetExternalMentionStats)
+	api.POST("/external-mentions", h.CreateExternalMention)
 	api.GET("/authority/score", h.GetAuthorityScore)
 	api.GET("/audit/progress", h.GetAuditProgress)
 	api.GET("/audit/products", h.GetAuditProducts)
@@ -97,4 +100,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 
 	// Onboarding Audit — re-run store audit for a merchant on demand.
 	admin.POST("/audit/:merchant_id", h.AdminTriggerAudit)
+
+	// External Mentions — admin verification
+	admin.POST("/external-mentions/:id/verify", h.AdminVerifyExternalMention)
 }

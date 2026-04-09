@@ -94,13 +94,25 @@ func BuildSchema(in SchemaInput) (string, error) {
 		brandEntity["sameAs"] = in.SocialLinks
 	}
 
-	// Organization — references Brand by @id; sameAs lives on Brand only to avoid duplication.
+	// Organization — references Brand by @id; sameAs on both Brand AND Organization maximises
+	// disambiguation signal so AI assistants can link both nodes to the real-world entity.
 	organization := map[string]any{
 		"@type": "Organization",
 		"@id":   orgID,
 		"name":  in.BrandName,
 		"url":   storeURL,
 		"brand": map[string]any{"@id": brandID},
+		"identifier": map[string]any{
+			"@type":      "PropertyValue",
+			"propertyID": "ShopifyDomain",
+			"value":      in.ShopDomain,
+		},
+	}
+	if in.BrandDescription != "" {
+		organization["description"] = strings.Join(strings.Fields(in.BrandDescription), " ")
+	}
+	if len(in.SocialLinks) > 0 {
+		organization["sameAs"] = in.SocialLinks
 	}
 
 	// WebSite — fully defined with SearchAction so AI assistants know the site is navigable.
@@ -211,4 +223,121 @@ func BuildSchema(in SchemaInput) (string, error) {
 		return "", fmt.Errorf("fix: BuildSchema: %w", err)
 	}
 	return string(b), nil
+}
+
+// SchemaValidationResult reports which key schema signals are present and
+// a completeness score (0–1) based on 9 weighted checks.
+type SchemaValidationResult struct {
+	HasOrganization    bool    `json:"has_organization"`
+	HasProduct         bool    `json:"has_product"`
+	HasPrice           bool    `json:"has_price"`
+	HasAvailability    bool    `json:"has_availability"`
+	HasAggregateRating bool    `json:"has_aggregate_rating"`
+	HasLogo            bool    `json:"has_logo"`
+	HasSameAs          bool    `json:"has_same_as"`
+	HasIdentifier      bool    `json:"has_identifier"`
+	HasFAQ             bool    `json:"has_faq"`
+	CompletenessScore  float64 `json:"completeness_score"`
+}
+
+// ValidateSchema parses a JSON-LD string and checks for the presence of key
+// schema signals that AI assistants use for entity recognition and citation.
+// It walks the @graph array and inspects each node by @type.
+func ValidateSchema(schemaJSON string) SchemaValidationResult {
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(schemaJSON), &doc); err != nil {
+		return SchemaValidationResult{}
+	}
+
+	graphRaw, ok := doc["@graph"]
+	if !ok {
+		return SchemaValidationResult{}
+	}
+	graph, ok := graphRaw.([]any)
+	if !ok {
+		return SchemaValidationResult{}
+	}
+
+	var r SchemaValidationResult
+
+	for _, nodeRaw := range graph {
+		node, ok := nodeRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ, _ := node["@type"].(string)
+
+		switch typ {
+		case "Organization":
+			r.HasOrganization = true
+			if _, has := node["logo"]; has {
+				r.HasLogo = true
+			}
+			if _, has := node["sameAs"]; has {
+				r.HasSameAs = true
+			}
+			if _, has := node["identifier"]; has {
+				r.HasIdentifier = true
+			}
+
+		case "FAQPage":
+			r.HasFAQ = true
+
+		case "CollectionPage":
+			// Walk mainEntity → ItemList → itemListElement to find Product nodes
+			mainEntity, ok := node["mainEntity"].(map[string]any)
+			if !ok {
+				continue
+			}
+			items, ok := mainEntity["itemListElement"].([]any)
+			if !ok {
+				continue
+			}
+			for _, itemRaw := range items {
+				item, ok := itemRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				productRaw, ok := item["item"].(map[string]any)
+				if !ok {
+					continue
+				}
+				if pt, _ := productRaw["@type"].(string); pt == "Product" {
+					r.HasProduct = true
+					if offers, ok := productRaw["offers"].(map[string]any); ok {
+						if _, has := offers["price"]; has {
+							r.HasPrice = true
+						}
+						if _, has := offers["availability"]; has {
+							r.HasAvailability = true
+						}
+					}
+					if _, has := productRaw["aggregateRating"]; has {
+						r.HasAggregateRating = true
+					}
+				}
+			}
+		}
+	}
+
+	// Score = number of passing checks / 9 total checks
+	checks := []bool{
+		r.HasOrganization,
+		r.HasProduct,
+		r.HasPrice,
+		r.HasAvailability,
+		r.HasAggregateRating,
+		r.HasLogo,
+		r.HasSameAs,
+		r.HasIdentifier,
+		r.HasFAQ,
+	}
+	passed := 0
+	for _, c := range checks {
+		if c {
+			passed++
+		}
+	}
+	r.CompletenessScore = float64(passed) / float64(len(checks))
+	return r
 }

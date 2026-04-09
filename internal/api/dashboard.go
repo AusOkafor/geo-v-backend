@@ -235,9 +235,11 @@ func (h *Handler) GetSchemaStatus(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]any{"active": false, "value": nil})
 	}
 
+	validation := fix.ValidateSchema(value)
 	return c.JSON(http.StatusOK, map[string]any{
-		"active": value != "",
-		"value":  value,
+		"active":     value != "",
+		"value":      value,
+		"validation": validation,
 	})
 }
 

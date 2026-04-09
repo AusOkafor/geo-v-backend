@@ -140,6 +140,18 @@ func (h *Handler) GetCompetitors(c echo.Context) error {
 	return c.JSON(http.StatusOK, comps)
 }
 
+func (h *Handler) GetCompetitorGaps(c echo.Context) error {
+	m, err := h.getAuthMerchant(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	gaps, err := store.GetCompetitorGaps(c.Request().Context(), h.DB, m.ID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, gaps)
+}
+
 func (h *Handler) GetFixes(c echo.Context) error {
 	m, err := h.getAuthMerchant(c)
 	if err != nil {

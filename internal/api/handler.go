@@ -56,6 +56,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	api.GET("/visibility/quickwins", h.GetQuickWins)
 	api.GET("/visibility/progress", h.GetScanProgress)
 	api.GET("/competitors", h.GetCompetitors)
+	api.GET("/competitors/gaps", h.GetCompetitorGaps)
 	api.GET("/fixes", h.GetFixes)
 	api.GET("/fixes/:id", h.GetFix)
 	api.POST("/fixes/:id/approve", h.ApproveFix)

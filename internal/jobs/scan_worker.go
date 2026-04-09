@@ -82,6 +82,10 @@ func (w *ScanWorker) Work(ctx context.Context, job *river.Job[ScanJobArgs]) erro
 			if err := store.UpsertScanCost(ctx, w.db, merchantID, result.Platform, result.TokensIn, result.TokensOut, result.CostUSD); err != nil {
 				return fmt.Errorf("scan: upsert cost: %w", err)
 			}
+			// Store normalised competitor mentions for gap-analysis queries ("losing to X on N queries").
+			if err := store.StoreCompetitorMentions(ctx, w.db, merchantID, result); err != nil {
+				slog.Warn("scan: failed to store competitor mentions (non-fatal)", "err", err)
+			}
 
 			// Rate limit: 500ms between platform calls
 			select {

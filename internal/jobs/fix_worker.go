@@ -438,6 +438,39 @@ func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArg
 		_, _ = w.riverClient.Insert(ctx, SchemaRebuildJobArgs{MerchantID: job.Args.MerchantID}, nil)
 		return nil
 
+	case fix.FixCollectionDescription:
+		var gen struct {
+			Description string `json:"description"`
+		}
+		if err := unmarshalJSON(f.Generated, &gen); err != nil || gen.Description == "" {
+			applyErr = fmt.Errorf("fix apply: no description in collection fix generated content")
+			break
+		}
+		if f.TargetGID == "" {
+			applyErr = fmt.Errorf("fix apply: collection_description fix missing target_gid")
+			break
+		}
+		applyErr = shopify.UpdateCollectionDescription(ctx, merchant.ShopDomain, token, f.TargetGID, gen.Description)
+
+	case fix.FixAboutPage, fix.FixSizeGuide:
+		var gen struct {
+			Content string `json:"content"`
+		}
+		if err := unmarshalJSON(f.Generated, &gen); err != nil || gen.Content == "" {
+			applyErr = fmt.Errorf("fix apply: no content in page fix generated content")
+			break
+		}
+		pageTitle := "About Us"
+		if fix.FixType(f.FixType) == fix.FixSizeGuide {
+			pageTitle = "Size Guide"
+		}
+		// If target_gid is set, update existing page body; otherwise create a new page.
+		if f.TargetGID != "" {
+			applyErr = shopify.UpdatePage(ctx, merchant.ShopDomain, token, f.TargetGID, gen.Content)
+		} else {
+			_, applyErr = shopify.CreatePage(ctx, merchant.ShopDomain, token, pageTitle, gen.Content)
+		}
+
 	default:
 		// listing cannot be auto-applied — mark as manual.
 		slog.Info("fix apply: manual action required",

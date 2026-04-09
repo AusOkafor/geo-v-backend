@@ -327,6 +327,73 @@ func buildRecognitionReasons(tier string, mentioned, total int) []string {
 	}
 }
 
+// ── Competitor mentions ───────────────────────────────────────────────────────
+
+// StoreCompetitorMentions records every competitor cited in a single scan result.
+// Uses ON CONFLICT DO NOTHING so re-running a scan on the same day is safe.
+func StoreCompetitorMentions(ctx context.Context, db *pgxpool.Pool, merchantID int64, r platform.CitationResult) error {
+	for _, c := range r.Competitors {
+		if c.Name == "" {
+			continue
+		}
+		_, err := db.Exec(ctx, `
+			INSERT INTO competitor_mentions
+				(merchant_id, scan_date, platform, query_text, competitor_name,
+				 competitor_pos, merchant_mentioned, merchant_pos)
+			VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT ON CONSTRAINT uq_competitor_mention DO NOTHING
+		`, merchantID, r.Platform, r.Query, c.Name, c.Position, r.Mentioned, r.Position)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CompetitorGapEntry represents one competitor and how many queries they beat the merchant on.
+type CompetitorGapEntry struct {
+	CompetitorName string   `json:"competitor_name"`
+	QueriesLost    int      `json:"queries_lost"`   // queries where they appear and merchant does not
+	Platforms      []string `json:"platforms"`
+}
+
+// GetCompetitorGaps returns the competitors beating the merchant most often on the latest scan date,
+// ranked by number of queries where the merchant was not mentioned.
+func GetCompetitorGaps(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]CompetitorGapEntry, error) {
+	rows, err := db.Query(ctx, `
+		SELECT
+			competitor_name,
+			COUNT(DISTINCT query_text)                            AS queries_lost,
+			array_agg(DISTINCT platform ORDER BY platform)       AS platforms
+		FROM competitor_mentions
+		WHERE merchant_id   = $1
+		  AND NOT merchant_mentioned
+		  AND scan_date = (
+			SELECT MAX(scan_date) FROM competitor_mentions WHERE merchant_id = $1
+		  )
+		GROUP BY competitor_name
+		ORDER BY queries_lost DESC
+		LIMIT 10
+	`, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []CompetitorGapEntry
+	for rows.Next() {
+		var e CompetitorGapEntry
+		if err := rows.Scan(&e.CompetitorName, &e.QueriesLost, &e.Platforms); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	if entries == nil {
+		entries = []CompetitorGapEntry{}
+	}
+	return entries, rows.Err()
+}
+
 // UpsertScanCost adds (or accumulates) daily cost for merchant+platform.
 func UpsertScanCost(ctx context.Context, db *pgxpool.Pool, merchantID int64, platformName string, tokensIn, tokensOut int, costUSD float64) error {
 	_, err := db.Exec(ctx, `

@@ -12,20 +12,21 @@ import (
 
 // ProductAudit mirrors a row from merchant_product_audit.
 type ProductAudit struct {
-	ID                      int64
-	MerchantID              int64
-	ProductID               string
-	ProductHandle           string
-	ProductTitle            string
-	CurrentDescriptionWords int
-	MissingMaterialInfo     bool
-	MissingSizingInfo       bool
-	MissingCareInstructions bool
-	ImageCount              int
-	ImagesMissingAltText    int
-	CompletenessScore       float64
-	NeedsAttention          bool
-	MerchantFixedAt         *time.Time
+	ID                      int64      `json:"id"`
+	MerchantID              int64      `json:"merchant_id"`
+	ProductID               string     `json:"product_id"`
+	ProductHandle           string     `json:"product_handle"`
+	ProductTitle            string     `json:"product_title"`
+	CurrentDescriptionWords int        `json:"current_description_words"`
+	MissingMaterialInfo     bool       `json:"missing_material_info"`
+	MissingSizingInfo       bool       `json:"missing_sizing_info"`
+	MissingCareInstructions bool       `json:"missing_care_instructions"`
+	ImageCount              int        `json:"image_count"`
+	ImagesMissingAltText    int        `json:"images_missing_alt_text"`
+	CompletenessScore       float64    `json:"completeness_score"`
+	NeedsAttention          bool       `json:"needs_attention"`
+	FixApplied              bool       `json:"fix_applied"`
+	MerchantFixedAt         *time.Time `json:"merchant_fixed_at,omitempty"`
 }
 
 // UpsertProductAudit inserts or updates a product audit record.
@@ -111,15 +112,16 @@ func MarkProductFixed(ctx context.Context, db *pgxpool.Pool, merchantID int64, p
 
 // CollectionAudit mirrors a row from merchant_collection_audit.
 type CollectionAudit struct {
-	ID                     int64
-	MerchantID             int64
-	CollectionID           string
-	CollectionHandle       string
-	CollectionTitle        string
-	CurrentDescriptionWords int
-	ProductCount           int
-	AIDescriptionEligible  bool
-	NeedsAttention         bool
+	ID                      int64  `json:"id"`
+	MerchantID              int64  `json:"merchant_id"`
+	CollectionID            string `json:"collection_id"`
+	CollectionHandle        string `json:"collection_handle"`
+	CollectionTitle         string `json:"collection_title"`
+	CurrentDescriptionWords int    `json:"current_description_words"`
+	ProductCount            int    `json:"product_count"`
+	AIDescriptionEligible   bool   `json:"ai_description_eligible"`
+	NeedsAttention          bool   `json:"needs_attention"`
+	FixApplied              bool   `json:"fix_applied"`
 }
 
 // UpsertCollectionAudit inserts or updates a collection audit record.
@@ -181,19 +183,20 @@ func GetCollectionsEligibleForFix(ctx context.Context, db *pgxpool.Pool, merchan
 
 // PageAudit mirrors a row from merchant_page_audit.
 type PageAudit struct {
-	ID               int64
-	MerchantID       int64
-	PageID           string
-	PageHandle       string
-	PageTitle        string
-	PageType         string
-	WordCount        int
-	FAQQuestionCount int
-	AboutHasStory    bool
-	AboutHasTeam     bool
-	AIContentEligible bool
-	NeedsAttention   bool
-	IsPlaceholder    bool
+	ID                int64  `json:"id"`
+	MerchantID        int64  `json:"merchant_id"`
+	PageID            string `json:"page_id"`
+	PageHandle        string `json:"page_handle"`
+	PageTitle         string `json:"page_title"`
+	PageType          string `json:"page_type"`
+	WordCount         int    `json:"word_count"`
+	FAQQuestionCount  int    `json:"faq_question_count"`
+	AboutHasStory     bool   `json:"about_has_story"`
+	AboutHasTeam      bool   `json:"about_has_team"`
+	AIContentEligible bool   `json:"ai_content_eligible"`
+	NeedsAttention    bool   `json:"needs_attention"`
+	IsPlaceholder     bool   `json:"is_placeholder"`
+	FixApplied        bool   `json:"fix_applied"`
 }
 
 // UpsertPageAudit inserts or updates a page audit record (keyed on merchant_id + page_type).
@@ -261,18 +264,18 @@ func GetPagesEligibleForFix(ctx context.Context, db *pgxpool.Pool, merchantID in
 
 // AuditProgress mirrors a row from merchant_audit_progress.
 type AuditProgress struct {
-	MerchantID                int64
-	TotalProducts             int
-	ProductsNeedingAttention  int
-	ProductsFixed             int
-	TotalCollections          int
-	CollectionsNeedingAttention int
-	CollectionsFixed          int
-	TotalPagesAudited         int
-	PagesNeedingAttention     int
-	PagesFixed                int
-	OverallCompletenessScore  float64
-	LastCalculatedAt          time.Time
+	MerchantID                  int64     `json:"merchant_id"`
+	TotalProducts               int       `json:"total_products"`
+	ProductsNeedingAttention    int       `json:"products_needing_attention"`
+	ProductsFixed               int       `json:"products_fixed"`
+	TotalCollections            int       `json:"total_collections"`
+	CollectionsNeedingAttention int       `json:"collections_needing_attention"`
+	CollectionsFixed            int       `json:"collections_fixed"`
+	TotalPagesAudited           int       `json:"total_pages_audited"`
+	PagesNeedingAttention       int       `json:"pages_needing_attention"`
+	PagesFixed                  int       `json:"pages_fixed"`
+	OverallCompletenessScore    float64   `json:"overall_completeness_score"`
+	LastCalculatedAt            time.Time `json:"updated_at"`
 }
 
 // UpsertAuditProgress saves the current progress snapshot.

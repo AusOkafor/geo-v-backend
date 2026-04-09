@@ -17,7 +17,7 @@ func (h *Handler) GetAuditProgress(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
-	progress, err := store.GetAuditProgress(c.Request().Context(), h.DB, m.ID)
+	progress, err := h.AuditService.GetProgress(c.Request().Context(), m.ID)
 	if err != nil {
 		// No progress row yet — return zeroed struct rather than 404
 		return c.JSON(http.StatusOK, store.AuditProgress{MerchantID: m.ID})
@@ -31,7 +31,7 @@ func (h *Handler) GetAuditProducts(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
-	products, err := store.GetProductsNeedingAttention(c.Request().Context(), h.DB, m.ID, 50)
+	products, err := h.AuditService.GetProductsNeedingAttention(c.Request().Context(), m.ID, 50)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load product audit")
 	}
@@ -44,7 +44,7 @@ func (h *Handler) GetAuditCollections(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
-	collections, err := store.GetCollectionsEligibleForFix(c.Request().Context(), h.DB, m.ID)
+	collections, err := h.AuditService.GetCollectionsNeedingAttention(c.Request().Context(), m.ID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load collection audit")
 	}
@@ -57,7 +57,7 @@ func (h *Handler) GetAuditPages(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
-	pages, err := store.GetPagesEligibleForFix(c.Request().Context(), h.DB, m.ID)
+	pages, err := h.AuditService.GetPagesNeedingAttention(c.Request().Context(), m.ID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load page audit")
 	}

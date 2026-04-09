@@ -20,6 +20,7 @@ import (
 	"github.com/austinokafor/geo-backend/internal/platform/mock"
 	"github.com/austinokafor/geo-backend/internal/platform/openai"
 	"github.com/austinokafor/geo-backend/internal/platform/perplexity"
+	"github.com/austinokafor/geo-backend/internal/service"
 )
 
 func main() {
@@ -82,12 +83,12 @@ func main() {
 		fixGenerator = fix.NewGenerator(cfg.AnthropicKey)
 	}
 
-	// Build River workers — workers that need the riverClient are registered after the client is created.
+	// Workers that don't need riverClient are registered before client creation.
 	workers := river.NewWorkers()
 	river.AddWorker(workers, jobs.NewProductSyncWorker(pool, encKey))
 	river.AddWorker(workers, jobs.NewDataDeletionWorker(pool))
-	river.AddWorker(workers, jobs.NewFixGenerationWorker(pool, fixGenerator))
 	river.AddWorker(workers, jobs.NewSchemaRebuildWorker(pool, encKey))
+	river.AddWorker(workers, jobs.NewValidationWorker(pool))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{
@@ -105,14 +106,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Register workers that need the riverClient reference
-	river.AddWorker(workers, jobs.NewScanWorker(pool, aiClients, riverClient))
+	// Build services — require riverClient for job enqueueing.
+	auditSvc := service.NewAuditService(pool, encKey)
+	fixSvc := service.NewFixService(pool, encKey, fixGenerator, riverClient)
+	scanSvc := service.NewScanService(pool, aiClients, riverClient)
+
+	// Register workers that need riverClient or services.
+	river.AddWorker(workers, jobs.NewScanWorker(scanSvc))
 	river.AddWorker(workers, jobs.NewDailyScanScheduler(pool, riverClient))
 	river.AddWorker(workers, jobs.NewWeeklyFixScheduler(pool, riverClient))
+	river.AddWorker(workers, jobs.NewFixGenerationWorker(fixSvc))
 	river.AddWorker(workers, jobs.NewFixApplyWorker(pool, encKey, riverClient))
-	river.AddWorker(workers, jobs.NewValidationWorker(pool))
 	river.AddWorker(workers, jobs.NewReviewScanWorker(pool, encKey, riverClient))
-	river.AddWorker(workers, jobs.NewOnboardingAuditWorker(pool, encKey, riverClient))
+	river.AddWorker(workers, jobs.NewOnboardingAuditWorker(auditSvc, riverClient))
 
 	if err := riverClient.Start(ctx); err != nil {
 		slog.Error("river start failed", "err", err)

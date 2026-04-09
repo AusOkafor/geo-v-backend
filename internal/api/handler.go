@@ -6,15 +6,19 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/riverqueue/river"
 	"github.com/austinokafor/geo-backend/internal/config"
+	"github.com/austinokafor/geo-backend/internal/service"
 	"github.com/austinokafor/geo-backend/internal/verification"
 )
 
 // Handler holds all dependencies for HTTP handlers.
 type Handler struct {
-	DB       *pgxpool.Pool
-	River    *river.Client[pgx.Tx]
-	Config   *config.Config
-	Verifier *verification.Verifier
+	DB           *pgxpool.Pool
+	River        *river.Client[pgx.Tx]
+	Config       *config.Config
+	Verifier     *verification.Verifier
+	AuditService *service.AuditService
+	FixService   *service.FixService
+	ScanService  *service.ScanService
 }
 
 // RegisterRoutes registers all API routes on the Echo instance.

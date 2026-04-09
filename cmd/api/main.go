@@ -21,6 +21,7 @@ import (
 	"github.com/austinokafor/geo-backend/internal/platform/gemini"
 	"github.com/austinokafor/geo-backend/internal/platform/openai"
 	"github.com/austinokafor/geo-backend/internal/platform/perplexity"
+	"github.com/austinokafor/geo-backend/internal/service"
 	"github.com/austinokafor/geo-backend/internal/verification"
 )
 
@@ -120,10 +121,13 @@ func main() {
 	verifier := verification.New(aiClients, pool)
 
 	h := &api.Handler{
-		DB:       pool,
-		River:    riverClient,
-		Config:   cfg,
-		Verifier: verifier,
+		DB:           pool,
+		River:        riverClient,
+		Config:       cfg,
+		Verifier:     verifier,
+		AuditService: service.NewAuditService(pool, nil),                    // nil encKey — API only reads
+		FixService:   service.NewFixService(pool, nil, nil, riverClient),    // nil encKey/generator — API only reads and approves/rejects
+		ScanService:  service.NewScanService(pool, nil, nil),                // nil clients/river — API only reads scan data
 	}
 	h.RegisterRoutes(e)
 

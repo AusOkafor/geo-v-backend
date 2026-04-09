@@ -5,516 +5,66 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/austinokafor/geo-backend/internal/crypto"
 	"github.com/austinokafor/geo-backend/internal/fix"
+	"github.com/austinokafor/geo-backend/internal/service"
 	"github.com/austinokafor/geo-backend/internal/shopify"
 	"github.com/austinokafor/geo-backend/internal/store"
 )
 
-// blockedQuestionPhrases are patterns that indicate self-promotional FAQ questions.
-// AI assistants penalise schemas containing these as low-trust SEO content.
-var blockedQuestionPhrases = []string{
-	"best brand", "top brand", "leading brand", "why choose", "why should i choose",
-	"why is", "best jewelry", "top jewelry", "standout", "number one", "#1",
-}
-
-// validateFAQPairs checks generated FAQ content for patterns AI treats as low-trust.
-// Returns an error describing the first violation found.
-func validateFAQPairs(faqs []struct {
-	Question string `json:"question"`
-	Answer   string `json:"answer"`
-}, brandName string) error {
-	for i, faq := range faqs {
-		q := strings.ToLower(faq.Question)
-		for _, blocked := range blockedQuestionPhrases {
-			if strings.Contains(q, blocked) {
-				return fmt.Errorf("FAQ %d: self-promotional question pattern %q — rewrite as a neutral buyer question", i+1, blocked)
-			}
-		}
-		words := strings.Fields(faq.Answer)
-		if len(words) < 5 {
-			return fmt.Errorf("FAQ %d: answer too short (%d words, minimum 5)", i+1, len(words))
-		}
-		// Block answers that are only the brand name + filler with no substance
-		answerWithoutBrand := strings.TrimSpace(strings.ReplaceAll(strings.ToLower(faq.Answer), strings.ToLower(brandName), ""))
-		if len(strings.Fields(answerWithoutBrand)) < 3 {
-			return fmt.Errorf("FAQ %d: answer contains no substance beyond brand name", i+1)
-		}
-	}
-	return nil
-}
-
-// FixGenerationWorker creates pending_fixes from scan gaps using Claude (or mock).
+// FixGenerationWorker calls FixService to generate all eligible fixes for a merchant.
 type FixGenerationWorker struct {
 	river.WorkerDefaults[FixGenerationJobArgs]
-	db        *pgxpool.Pool
-	generator fix.Generatable
+	fixService *service.FixService
 }
 
-func NewFixGenerationWorker(db *pgxpool.Pool, generator fix.Generatable) *FixGenerationWorker {
-	return &FixGenerationWorker{db: db, generator: generator}
+func NewFixGenerationWorker(fixService *service.FixService) *FixGenerationWorker {
+	return &FixGenerationWorker{fixService: fixService}
 }
 
 func (w *FixGenerationWorker) Work(ctx context.Context, job *river.Job[FixGenerationJobArgs]) error {
-	merchant, err := store.GetMerchant(ctx, w.db, job.Args.MerchantID)
+	result, err := w.fixService.GenerateFixes(ctx, job.Args.MerchantID)
 	if err != nil {
 		return err
 	}
-	if !merchant.Active {
-		return nil
-	}
-
-	// Get latest visibility scores
-	scores, err := store.GetVisibilityScores(ctx, w.db, merchant.ID, 30)
-	if err != nil {
-		return err
-	}
-
-	// Get competitor names from citation records
-	comps, err := store.GetCompetitors(ctx, w.db, merchant.ID)
-	if err != nil {
-		comps = nil // non-fatal
-	}
-	competitorNames := make([]string, 0, len(comps))
-	for _, c := range comps {
-		competitorNames = append(competitorNames, c.Name)
-	}
-
-	// Load top query gaps from this merchant's actual scan data.
-	queryGaps, _ := store.GetQueryGaps(ctx, w.db, merchant.ID)
-	missedQueries := make([]string, 0, len(queryGaps))
-	for _, g := range queryGaps {
-		missedQueries = append(missedQueries, g.Query)
-	}
-
-	// If no visibility scores exist yet treat all platforms as score=0 so fixes are still generated.
-	if len(scores) == 0 {
-		scores = []store.VisibilityScore{
-			{Platform: "chatgpt", Score: 0},
-			{Platform: "perplexity", Score: 0},
-			{Platform: "gemini", Score: 0},
-		}
-	}
-
-	// Load store audit — nil if audit hasn't run yet.
-	audit, _ := store.GetMerchantAudit(ctx, w.db, merchant.ID)
-
-	// Check which fix types already have a pending/applied fix (skip re-generating those).
-	existingFixes, _ := store.GetFixes(ctx, w.db, merchant.ID, "")
-	existingTypes := map[fix.FixType]bool{}
-	existingCollectionTargets := map[string]bool{} // collection GIDs already targeted
-	for _, f := range existingFixes {
-		if f.Status == "rejected" {
-			continue
-		}
-		existingTypes[fix.FixType(f.FixType)] = true
-		if fix.FixType(f.FixType) == fix.FixCollectionDescription && f.TargetGID != "" {
-			existingCollectionTargets[f.TargetGID] = true
-		}
-	}
-
-	// Determine if any platform is below threshold
-	anyLowScore := false
-	for _, s := range scores {
-		if s.Score < 80 {
-			anyLowScore = true
-			break
-		}
-	}
-	if !anyLowScore {
-		return nil
-	}
-
-	// ── Layer 1: Schema ────────────────────────────────────────────────────────
-	// Foundation fix — lets AI parse the catalog. Skip if already live.
-	schemaAlreadyLive := audit != nil && audit.SchemaLive
-	if !existingTypes[fix.FixSchema] && !schemaAlreadyLive {
-		result, err := w.generator.Generate(ctx, fix.GenerateInput{
-			BrandName:   merchant.BrandName,
-			Category:    merchant.Category,
-			Competitors: competitorNames,
-			FixType:     fix.FixSchema,
-			QueryGaps:   missedQueries,
-		})
-		if err == nil {
-			_, _ = store.InsertFix(ctx, w.db, store.Fix{
-				MerchantID:  merchant.ID,
-				FixType:     string(fix.FixSchema),
-				FixLayer:    "structure",
-				Priority:    "medium",
-				Title:       result.Title,
-				Explanation: result.Explanation,
-				Generated:   result.Generated,
-				EstImpact:   fix.EstImpact(fix.FixSchema),
-			})
-			existingTypes[fix.FixSchema] = true
-		}
-	}
-
-	// ── Layer 1: FAQ action item ───────────────────────────────────────────────
-	// Direct merchants to add their real FAQs in Settings rather than AI-generating them.
-	if !existingTypes[fix.FixFAQ] {
-		merchantFAQs, _ := store.GetMerchantFAQs(ctx, w.db, merchant.ID)
-		hasFAQPage := audit != nil && audit.HasFAQPage
-		if len(merchantFAQs) == 0 && !hasFAQPage {
-			actionPayload, _ := json.Marshal(map[string]string{
-				"action": "Add your store FAQs in Settings → FAQs. FAQs help AI assistants answer buyer questions about your shipping, returns, materials, and sizing — improving citation rates significantly.",
-			})
-			_, err := store.InsertFix(ctx, w.db, store.Fix{
-				MerchantID:  merchant.ID,
-				FixType:     string(fix.FixFAQ),
-				FixLayer:    "structure",
-				Priority:    "high",
-				Title:       "Add store FAQs to improve AI citation rates",
-				Explanation: "AI assistants frequently answer questions about shipping, returns, materials, and sizing. Stores with factual FAQ schema are cited up to 2× more often. Go to Settings → FAQs to add your real store policies.",
-				Generated:   actionPayload,
-				EstImpact:   fix.EstImpact(fix.FixFAQ),
-			})
-			if err != nil {
-				return fmt.Errorf("fix gen: insert faq action fix: %w", err)
-			}
-			existingTypes[fix.FixFAQ] = true
-		}
-	}
-
-	// ── Layer 2: Collection descriptions ──────────────────────────────────────
-	// AI-generated collection intros — high impact, low brand-sensitivity.
-	// Limit to top 3 collections by product count.
-	collections, _ := store.GetCollectionsEligibleForFix(ctx, w.db, merchant.ID)
-	const maxCollectionFixes = 3
-	collectionGenerated := 0
-	for _, c := range collections {
-		if collectionGenerated >= maxCollectionFixes {
-			break
-		}
-		if existingCollectionTargets[c.CollectionID] {
-			continue
-		}
-		result, err := w.generator.Generate(ctx, fix.GenerateInput{
-			BrandName:              merchant.BrandName,
-			Category:               merchant.Category,
-			Competitors:            competitorNames,
-			FixType:                fix.FixCollectionDescription,
-			CollectionTitle:        c.CollectionTitle,
-			CollectionProductCount: c.ProductCount,
-			QueryGaps:              missedQueries,
-		})
-		if err != nil {
-			slog.Warn("fix gen: collection description generation failed (non-fatal)",
-				"merchant_id", merchant.ID, "collection_id", c.CollectionID, "err", err)
-			continue
-		}
-		_, err = store.InsertFix(ctx, w.db, store.Fix{
-			MerchantID:  merchant.ID,
-			TargetGID:   c.CollectionID,
-			FixType:     string(fix.FixCollectionDescription),
-			FixLayer:    "content",
-			Priority:    "high",
-			Title:       result.Title,
-			Explanation: result.Explanation,
-			Generated:   result.Generated,
-			EstImpact:   fix.EstImpact(fix.FixCollectionDescription),
-		})
-		if err != nil {
-			return fmt.Errorf("fix gen: insert collection fix for %s: %w", c.CollectionID, err)
-		}
-		existingCollectionTargets[c.CollectionID] = true
-		collectionGenerated++
-	}
-
-	// ── Layer 3: Authority — Google Merchant Center ───────────────────────────
-	// Gemini uses Merchant Center to verify business legitimacy.
-	// Generate a setup fix if not connected and no existing fix for this type.
-	if !existingTypes[fix.FixMerchantCenter] {
-		if audit == nil || !audit.GoogleMerchantCenterConnected {
-			generated, _ := json.Marshal(map[string]string{
-				"action_url": "https://apps.shopify.com/google",
-				"app_name":   "Google & YouTube",
-				"description": "Install the Google & YouTube app from the Shopify App Store, connect your Google account, and set up a product feed. Once connected, Gemini can verify your business and access accurate product data.",
-			})
-			_, err := store.InsertFix(ctx, w.db, store.Fix{
-				MerchantID:  merchant.ID,
-				FixType:     string(fix.FixMerchantCenter),
-				FixLayer:    "authority",
-				Priority:    "high",
-				Title:       "Connect Google Merchant Center",
-				Explanation: "Gemini (Google's AI) uses Merchant Center to verify that your store is a legitimate business. Connected stores are cited more frequently in Google AI Overviews and shopping recommendations. Setup takes under 15 minutes.",
-				Generated:   generated,
-				EstImpact:   fix.EstImpact(fix.FixMerchantCenter),
-			})
-			if err != nil {
-				return fmt.Errorf("fix gen: insert merchant_center fix: %w", err)
-			}
-			existingTypes[fix.FixMerchantCenter] = true
-		}
-	}
-
-	// ── Layer 2: Page content ─────────────────────────────────────────────────
-	// AI-generated templates for About, Size Guide pages.
-	// One fix per missing page type — merchant fills in the specifics.
-	pageCandidates, _ := store.GetPagesEligibleForFix(ctx, w.db, merchant.ID)
-	for _, pg := range pageCandidates {
-		var ft fix.FixType
-		switch pg.PageType {
-		case "about":
-			ft = fix.FixAboutPage
-		case "size_guide":
-			ft = fix.FixSizeGuide
-		default:
-			continue // faq is handled above via action item
-		}
-		if existingTypes[ft] {
-			continue
-		}
-		result, err := w.generator.Generate(ctx, fix.GenerateInput{
-			BrandName: merchant.BrandName,
-			Category:  merchant.Category,
-			FixType:   ft,
-			PageType:  pg.PageType,
-			QueryGaps: missedQueries,
-		})
-		if err != nil {
-			slog.Warn("fix gen: page content generation failed (non-fatal)",
-				"merchant_id", merchant.ID, "page_type", pg.PageType, "err", err)
-			continue
-		}
-		_, err = store.InsertFix(ctx, w.db, store.Fix{
-			MerchantID:  merchant.ID,
-			FixType:     string(ft),
-			FixLayer:    "content",
-			Priority:    "medium",
-			Title:       result.Title,
-			Explanation: result.Explanation,
-			Generated:   result.Generated,
-			EstImpact:   fix.EstImpact(ft),
-		})
-		if err != nil {
-			return fmt.Errorf("fix gen: insert %s fix: %w", ft, err)
-		}
-		existingTypes[ft] = true
-	}
-
+	slog.Info("fix generation: complete",
+		"merchant_id", job.Args.MerchantID,
+		"total", result.TotalGenerated,
+		"collection", result.CollectionFixes,
+		"page", result.PageFixes,
+		"schema", result.SchemaFixes,
+	)
 	return nil
 }
 
-// FixApplyWorker applies an approved fix directly to Shopify.
+// FixApplyWorker calls FixService to apply one approved fix to Shopify.
 type FixApplyWorker struct {
 	river.WorkerDefaults[FixApplyJobArgs]
-	db            *pgxpool.Pool
-	encryptionKey []byte
-	riverClient   *river.Client[pgx.Tx]
+	fixService *service.FixService
 }
 
 func NewFixApplyWorker(db *pgxpool.Pool, encKey []byte, riverClient *river.Client[pgx.Tx]) *FixApplyWorker {
-	return &FixApplyWorker{db: db, encryptionKey: encKey, riverClient: riverClient}
+	return &FixApplyWorker{
+		fixService: service.NewFixService(db, encKey, nil, riverClient),
+	}
 }
 
 func (w *FixApplyWorker) Work(ctx context.Context, job *river.Job[FixApplyJobArgs]) error {
-	f, err := store.GetFix(ctx, w.db, job.Args.MerchantID, job.Args.FixID)
-	if err != nil {
-		return fmt.Errorf("fix apply: load fix: %w", err)
+	if err := w.fixService.ApplyFix(ctx, job.Args.MerchantID, job.Args.FixID); err != nil {
+		return err
 	}
-	if f.Status != "approved" {
-		return nil // already applied or rejected
-	}
-
-	merchant, err := store.GetMerchant(ctx, w.db, job.Args.MerchantID)
-	if err != nil {
-		return fmt.Errorf("fix apply: load merchant: %w", err)
-	}
-
-	token, err := crypto.Decrypt(merchant.AccessTokenEnc, w.encryptionKey)
-	if err != nil {
-		return fmt.Errorf("fix apply: decrypt token: %w", err)
-	}
-
-	var applyErr error
-	switch fix.FixType(f.FixType) {
-	case fix.FixDescription:
-		// Extract new description from generated JSONB and push via Shopify product API.
-		var gen struct {
-			Description string `json:"description"`
-		}
-		if err := unmarshalJSON(f.Generated, &gen); err != nil || gen.Description == "" {
-			applyErr = fmt.Errorf("fix apply: no description in generated content")
-			break
-		}
-		applyErr = shopify.UpdateDescription(ctx, merchant.ShopDomain, token, f.TargetGID, gen.Description)
-
-	case fix.FixSchema:
-		// Build schema programmatically from real Shopify data.
-		// AI only contributes the brand description text — all structural fields
-		// (URLs, prices, product handles) come from the Shopify API.
-		var gen struct {
-			BrandDescription string `json:"brand_description"`
-		}
-		_ = unmarshalJSON(f.Generated, &gen) // non-fatal if missing — description is optional
-
-		shopifyProducts, err := shopify.GetTopProducts(ctx, merchant.ShopDomain, token, 5, merchant.Category)
-		if err != nil {
-			slog.Warn("fix apply: could not fetch products for schema (non-fatal)", "err", err)
-		}
-
-		schemaProducts := make([]fix.SchemaProduct, 0, len(shopifyProducts))
-		for _, p := range shopifyProducts {
-			schemaProducts = append(schemaProducts, fix.SchemaProduct{
-				Handle:      p.Handle,
-				Title:       p.Title,
-				Description: p.Description,
-				MinPrice:    p.MinPrice,
-				Currency:    p.Currency,
-				ImageURL:    p.ImageURL,
-			})
-		}
-
-		// Pull applied FAQ fix to include Q&A pairs in FAQPage schema entity.
-		var faqs []fix.SchemaFAQ
-		if appliedFixes, err := store.GetFixes(ctx, w.db, merchant.ID, "applied"); err == nil {
-			for _, af := range appliedFixes {
-				if fix.FixType(af.FixType) != fix.FixFAQ {
-					continue
-				}
-				var faqGen struct {
-					FAQs []struct {
-						Question string `json:"question"`
-						Answer   string `json:"answer"`
-					} `json:"faqs"`
-				}
-				if json.Unmarshal(af.Generated, &faqGen) == nil {
-					limit := len(faqGen.FAQs)
-					if limit > 5 {
-						limit = 5
-					}
-					for _, q := range faqGen.FAQs[:limit] {
-						faqs = append(faqs, fix.SchemaFAQ{Question: q.Question, Answer: q.Answer})
-					}
-				}
-				break
-			}
-		}
-
-		schemaJSON, err := fix.BuildSchema(fix.SchemaInput{
-			BrandName:        merchant.BrandName,
-			ShopDomain:       merchant.ShopDomain,
-			BrandDescription: gen.BrandDescription,
-			TopProducts:      schemaProducts,
-			SocialLinks:      merchant.SocialLinks,
-			FAQs:             faqs,
-		})
-		if err != nil {
-			applyErr = fmt.Errorf("fix apply: build schema: %w", err)
-			break
-		}
-
-		if err := shopify.SetShopMetafield(
-			ctx, merchant.ShopDomain, token,
-			"geo_visibility", "schema_json", "json", schemaJSON,
-		); err != nil {
-			applyErr = fmt.Errorf("fix apply: set schema metafield: %w", err)
-			break
-		}
-		// Grant storefront read access so the Liquid theme extension can read it.
-		// Non-fatal if this fails — merchant can still enable manually.
-		if err := shopify.GrantStorefrontMetafieldAccess(
-			ctx, merchant.ShopDomain, token, "geo_visibility", "schema_json",
-		); err != nil {
-			slog.Warn("fix apply: storefront metafield access grant failed (non-fatal)",
-				"fix_id", f.ID, "err", err)
-		}
-
-	case fix.FixFAQ:
-		// Action-item fix: merchant needs to add FAQs in Settings.
-		// Generated contains {"action": "..."} not a faqs array — approving it just
-		// confirms they've seen the prompt. The schema rebuild will pick up real FAQs
-		// from merchant_faqs once the merchant adds them.
-		var actionCheck struct {
-			Action string `json:"action"`
-		}
-		if err := json.Unmarshal(f.Generated, &actionCheck); err == nil && actionCheck.Action != "" {
-			// Action-item fix — mark applied and trigger schema rebuild (uses real FAQs if any).
-			if err := store.SetFixStatus(ctx, w.db, f.ID, "applied"); err != nil {
-				return err
-			}
-			_, _ = w.riverClient.Insert(ctx, SchemaRebuildJobArgs{MerchantID: job.Args.MerchantID}, nil)
-			return nil
-		}
-		// Legacy path: fix contains generated FAQ pairs — validate and embed.
-		var faqGen struct {
-			FAQs []struct {
-				Question string `json:"question"`
-				Answer   string `json:"answer"`
-			} `json:"faqs"`
-		}
-		if err := json.Unmarshal(f.Generated, &faqGen); err != nil {
-			_ = store.SetFixStatus(ctx, w.db, f.ID, "failed")
-			return fmt.Errorf("fix apply: FAQ parse: %w", err)
-		}
-		if err := validateFAQPairs(faqGen.FAQs, merchant.BrandName); err != nil {
-			slog.Warn("fix apply: FAQ validation failed — marking failed so merchant can regenerate",
-				"fix_id", f.ID, "err", err)
-			return store.SetFixStatus(ctx, w.db, f.ID, "failed")
-		}
-		if err := store.SetFixStatus(ctx, w.db, f.ID, "applied"); err != nil {
-			return err
-		}
-		_, _ = w.riverClient.Insert(ctx, SchemaRebuildJobArgs{MerchantID: job.Args.MerchantID}, nil)
-		return nil
-
-	case fix.FixCollectionDescription:
-		var gen struct {
-			Description string `json:"description"`
-		}
-		if err := unmarshalJSON(f.Generated, &gen); err != nil || gen.Description == "" {
-			applyErr = fmt.Errorf("fix apply: no description in collection fix generated content")
-			break
-		}
-		if f.TargetGID == "" {
-			applyErr = fmt.Errorf("fix apply: collection_description fix missing target_gid")
-			break
-		}
-		applyErr = shopify.UpdateCollectionDescription(ctx, merchant.ShopDomain, token, f.TargetGID, gen.Description)
-
-	case fix.FixAboutPage, fix.FixSizeGuide:
-		var gen struct {
-			Content string `json:"content"`
-		}
-		if err := unmarshalJSON(f.Generated, &gen); err != nil || gen.Content == "" {
-			applyErr = fmt.Errorf("fix apply: no content in page fix generated content")
-			break
-		}
-		pageTitle := "About Us"
-		if fix.FixType(f.FixType) == fix.FixSizeGuide {
-			pageTitle = "Size Guide"
-		}
-		// If target_gid is set, update existing page body; otherwise create a new page.
-		if f.TargetGID != "" {
-			applyErr = shopify.UpdatePage(ctx, merchant.ShopDomain, token, f.TargetGID, gen.Content)
-		} else {
-			_, applyErr = shopify.CreatePage(ctx, merchant.ShopDomain, token, pageTitle, gen.Content)
-		}
-
-	default:
-		// listing cannot be auto-applied — mark as manual.
-		slog.Info("fix apply: manual action required",
-			"fix_id", f.ID, "fix_type", f.FixType, "merchant_id", job.Args.MerchantID)
-		return store.SetFixStatus(ctx, w.db, f.ID, "manual")
-	}
-
-	if applyErr != nil {
-		_ = store.SetFixStatus(ctx, w.db, f.ID, "failed")
-		return applyErr
-	}
-
-	return store.SetFixStatus(ctx, w.db, f.ID, "applied")
+	slog.Info("fix apply: complete", "merchant_id", job.Args.MerchantID, "fix_id", job.Args.FixID)
+	return nil
 }
 
 // SchemaRebuildWorker rebuilds the shop schema metafield from current merchant data.
 // Called when settings change (social links, brand name) so the live schema stays fresh.
+// Kept as a standalone worker — schema rebuild reads Shopify + store directly and doesn't
+// belong in FixService; it would be part of a future SchemaService (Phase 3+).
 type SchemaRebuildWorker struct {
 	river.WorkerDefaults[SchemaRebuildJobArgs]
 	db            *pgxpool.Pool
@@ -578,7 +128,6 @@ func (w *SchemaRebuildWorker) Work(ctx context.Context, job *river.Job[SchemaReb
 			faqs = append(faqs, fix.SchemaFAQ{Question: mf.Question, Answer: mf.Answer})
 		}
 	} else {
-		// Fall back to applied FAQ fix if no merchant-provided FAQs exist.
 		if appliedFixes, err := store.GetFixes(ctx, w.db, merchant.ID, "applied"); err == nil {
 			for _, af := range appliedFixes {
 				if fix.FixType(af.FixType) != fix.FixFAQ {
@@ -638,7 +187,6 @@ func (w *SchemaRebuildWorker) Work(ctx context.Context, job *river.Job[SchemaReb
 		slog.Warn("schema rebuild: storefront access grant failed (non-fatal)", "err", err)
 	}
 
-	// Mark schema as injected if review data was included.
 	if avgRating > 0 {
 		_ = store.SaveMerchantReviews(ctx, w.db, merchant.ID, "", "", avgRating, reviewCount, true)
 	}
@@ -648,11 +196,4 @@ func (w *SchemaRebuildWorker) Work(ctx context.Context, job *river.Job[SchemaReb
 		"review_injected", avgRating > 0,
 	)
 	return nil
-}
-
-func unmarshalJSON(data []byte, v any) error {
-	if len(data) == 0 {
-		return fmt.Errorf("empty JSON")
-	}
-	return json.Unmarshal(data, v)
 }

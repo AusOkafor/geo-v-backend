@@ -104,8 +104,8 @@ func (h *Handler) GetVisibilityScores(c echo.Context) error {
 	days := queryInt(c, "days", 30)
 	// Always re-aggregate today's citation_records so scores are fresh even if the
 	// scan worker failed to call UpsertVisibilityScores before completing.
-	_ = store.UpsertVisibilityScores(ctx, h.DB, m.ID)
-	scores, err := store.GetVisibilityScores(ctx, h.DB, m.ID, days)
+	_ = h.ScanService.UpsertVisibilityScores(ctx, m.ID)
+	scores, err := h.ScanService.GetVisibilityScores(ctx, m.ID, days)
 	if err != nil {
 		return err
 	}
@@ -120,8 +120,8 @@ func (h *Handler) GetDailyScores(c echo.Context) error {
 	ctx := c.Request().Context()
 	days := queryInt(c, "days", 30)
 	// Same on-demand aggregation as GetVisibilityScores.
-	_ = store.UpsertVisibilityScores(ctx, h.DB, m.ID)
-	scores, err := store.GetDailyScores(ctx, h.DB, m.ID, days)
+	_ = h.ScanService.UpsertVisibilityScores(ctx, m.ID)
+	scores, err := h.ScanService.GetDailyScores(ctx, m.ID, days)
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (h *Handler) GetCompetitors(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
-	comps, err := store.GetCompetitors(c.Request().Context(), h.DB, m.ID)
+	comps, err := h.ScanService.GetCompetitors(c.Request().Context(), m.ID)
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (h *Handler) GetCompetitorGaps(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
-	gaps, err := store.GetCompetitorGaps(c.Request().Context(), h.DB, m.ID)
+	gaps, err := h.ScanService.GetCompetitorGaps(c.Request().Context(), m.ID)
 	if err != nil {
 		return err
 	}
@@ -157,8 +157,7 @@ func (h *Handler) GetFixes(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
-	status := c.QueryParam("status")
-	fixes, err := store.GetFixes(c.Request().Context(), h.DB, m.ID, status)
+	fixes, err := h.FixService.GetFixes(c.Request().Context(), m.ID, c.QueryParam("status"))
 	if err != nil {
 		return err
 	}
@@ -174,11 +173,11 @@ func (h *Handler) GetFix(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid fix id")
 	}
-	fix, err := store.GetFix(c.Request().Context(), h.DB, m.ID, fixID)
+	f, err := h.FixService.GetFix(c.Request().Context(), m.ID, fixID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "fix not found")
 	}
-	return c.JSON(http.StatusOK, fix)
+	return c.JSON(http.StatusOK, f)
 }
 
 func (h *Handler) ApproveFix(c echo.Context) error {
@@ -190,12 +189,9 @@ func (h *Handler) ApproveFix(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid fix id")
 	}
-	if err := store.ApproveFix(c.Request().Context(), h.DB, m.ID, fixID); err != nil {
+	if err := h.FixService.ApproveFix(c.Request().Context(), m.ID, fixID); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	// Enqueue the apply job
-	_, _ = h.River.Insert(c.Request().Context(),
-		jobs.FixApplyJobArgs{MerchantID: m.ID, FixID: fixID}, nil)
 	return c.JSON(http.StatusOK, map[string]string{"status": "approved"})
 }
 
@@ -208,7 +204,7 @@ func (h *Handler) RejectFix(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid fix id")
 	}
-	if err := store.RejectFix(c.Request().Context(), h.DB, m.ID, fixID); err != nil {
+	if err := h.FixService.RejectFix(c.Request().Context(), m.ID, fixID); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "rejected"})

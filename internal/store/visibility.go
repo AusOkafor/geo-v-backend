@@ -50,6 +50,7 @@ type ScoredCompetitor struct {
 	Name              string         `json:"name"`
 	Platforms         []string       `json:"platforms"`
 	BestPosition      int            `json:"best_position"`
+	AvgPosition       float64        `json:"avg_position"`
 	PlatformPositions map[string]int `json:"platform_positions"`
 	TotalFrequency    int            `json:"total_frequency"`
 	TotalScans        int            `json:"total_scans"`
@@ -143,6 +144,7 @@ type rawCompetitorRow struct {
 	Name           string
 	Platforms      []string
 	BestPosition   int
+	AvgPosition    float64
 	TotalFrequency int
 	PlatformCount  int
 	TotalScans     int
@@ -327,6 +329,7 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 				MAX(raw_name)                                                AS display_name,
 				COALESCE(array_agg(DISTINCT platform), ARRAY[]::text[])  AS platforms,
 				COALESCE(MIN(CASE WHEN position > 0 THEN position END), 0) AS best_position,
+				COALESCE(AVG(NULLIF(position, 0))::float8, 0)                 AS avg_position,
 				COUNT(*)::int                                              AS total_frequency,
 				COUNT(DISTINCT platform)::int                             AS platform_count,
 				MIN(CASE WHEN platform = 'chatgpt'    AND position > 0 THEN position END) AS chatgpt_pos,
@@ -339,6 +342,7 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 			g.display_name,
 			g.platforms,
 			g.best_position,
+			g.avg_position,
 			g.total_frequency,
 			g.platform_count,
 			t.n AS total_scans,
@@ -359,7 +363,7 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 	for rows.Next() {
 		var r rawCompetitorRow
 		if err := rows.Scan(
-			&r.Name, &r.Platforms, &r.BestPosition,
+			&r.Name, &r.Platforms, &r.BestPosition, &r.AvgPosition,
 			&r.TotalFrequency, &r.PlatformCount, &r.TotalScans,
 			&r.ChatGPTPos, &r.PerplexityPos, &r.GeminiPos,
 		); err != nil {
@@ -502,6 +506,7 @@ func scoreAndFilterCompetitors(rows []rawCompetitorRow, weights map[string]float
 			Name:              r.Name,
 			Platforms:         r.Platforms,
 			BestPosition:      r.BestPosition,
+			AvgPosition:       math.Round(r.AvgPosition*10) / 10,
 			PlatformPositions: platPos,
 			TotalFrequency:    r.TotalFrequency,
 			TotalScans:        r.TotalScans,
@@ -533,6 +538,9 @@ func buildWhyPoints(r rawCompetitorRow) []string {
 		pct = (r.TotalFrequency * 100) / r.TotalScans
 	}
 	pts = append(pts, fmt.Sprintf("Appears in %d%% of AI responses (%d citations)", pct, r.TotalFrequency))
+	if r.AvgPosition > 0 {
+		pts = append(pts, fmt.Sprintf("Average rank %.1f when cited", r.AvgPosition))
+	}
 
 	switch {
 	case r.BestPosition == 1:
@@ -761,11 +769,11 @@ func readinessTopAction(notFoundScore, notUnderstoodScore, notTrustedScore int) 
 
 // NextAction is a single prioritized recommendation for the merchant.
 type NextAction struct {
-	Priority int    `json:"priority"` // 1 (highest) to 3
-	Type     string `json:"type"`     // "fix" | "content" | "structure"
-	Title    string `json:"title"`
-	Why      string `json:"why"`
-	Impact   string `json:"impact"` // e.g. "+18 pts estimated"
+	Type        string `json:"type"`        // "fix" | "content" | "structure" | "authority"
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Priority    string `json:"priority"`    // "high" | "medium" | "low"
+	ImpactScore int    `json:"impact_score"` // percent points (displayed as +X%)
 }
 
 // GetNextActions returns up to 3 prioritized actions derived from existing scan + fix data.
@@ -796,19 +804,19 @@ func GetNextActions(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 	// Action 1 — structural blocker: schema if missing, otherwise FAQ
 	if missingSchema {
 		actions = append(actions, NextAction{
-			Priority: 1,
-			Type:     "structure",
-			Title:    "Add JSON-LD product schema to your store",
-			Why:      "AI assistants cannot parse your catalog without structured data — this is the foundation everything else builds on",
-			Impact:   "+8 pts estimated",
+			Type:        "structure",
+			Title:       "Add JSON-LD product schema to your store",
+			Description: "AI assistants can’t parse your catalog without structured data — this is the foundation everything else builds on.",
+			Priority:    "high",
+			ImpactScore: 8,
 		})
 	} else if missingFAQ {
 		actions = append(actions, NextAction{
-			Priority: 1,
-			Type:     "structure",
-			Title:    "Publish an AI-optimized FAQ page",
-			Why:      "Buyer-intent Q&A directly matches how ChatGPT and Perplexity answer shopping queries — highest single-fix impact",
-			Impact:   "+18 pts estimated",
+			Type:        "structure",
+			Title:       "Publish an AI-optimized FAQ page",
+			Description: "Buyer-intent Q&A matches how AI answers shopping queries — this is one of the highest impact single changes.",
+			Priority:    "high",
+			ImpactScore: 18,
 		})
 	} else {
 		// Both structure fixes exist — show the highest pending fix as action 1
@@ -825,71 +833,86 @@ func GetNextActions(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 		`, merchantID).Scan(&fixTitle, &fixType, &fixImpact)
 		if err == nil {
 			actions = append(actions, NextAction{
-				Priority: 1,
-				Type:     "fix",
-				Title:    fixTitle,
-				Why:      fmt.Sprintf("Applying this %s fix removes a structural gap AI is penalising you for", fixType),
-				Impact:   fmt.Sprintf("+%d pts estimated", fixImpact),
+				Type:        "fix",
+				Title:       fixTitle,
+				Description: fmt.Sprintf("Applying this %s fix removes a structural gap AI is penalising you for.", fixType),
+				Priority:    "high",
+				ImpactScore: fixImpact,
 			})
 		}
 	}
 
-	// Action 2 — highest-opportunity content gap from actual scan data
-	// Query where the most competitors appeared but this merchant didn't = most winnable
-	var gapQuery string
-	var competitorCount int
-	err2 := db.QueryRow(ctx, `
-		WITH latest AS (
-			SELECT MAX(scanned_at) AS ts FROM citation_records WHERE merchant_id = $1
-		),
-		per_query AS (
-			SELECT
-				c.query,
-				COUNT(DISTINCT comp->>'name')::int AS competitor_count,
-				bool_or(c.mentioned)               AS any_mentioned
-			FROM citation_records c, latest
-			CROSS JOIN LATERAL jsonb_array_elements(
-				CASE WHEN jsonb_typeof(c.competitors) = 'array' THEN c.competitors ELSE '[]'::jsonb END
-			) AS comp
-			WHERE c.merchant_id = $1
-			  AND c.scanned_at = latest.ts
-			GROUP BY c.query
-		)
-		SELECT query, competitor_count
-		FROM per_query
-		WHERE NOT any_mentioned AND competitor_count >= 2
-		ORDER BY competitor_count DESC
-		LIMIT 1
-	`, merchantID).Scan(&gapQuery, &competitorCount)
-	if err2 == nil {
+	// Action 2 — personalized content action from audit or query gaps
+	collections, _ := GetCollectionsEligibleForFix(ctx, db, merchantID)
+	if n := len(collections); n > 0 {
 		actions = append(actions, NextAction{
-			Priority: 2,
-			Type:     "content",
-			Title:    fmt.Sprintf("Create content for: \"%s\"", gapQuery),
-			Why:      fmt.Sprintf("AI named %d competitors for this exact query — it knows the topic. Add a page or FAQ answer targeting this query so you appear too.", competitorCount),
-			Impact:   "High — AI-ready query with existing competition",
+			Type:        "content",
+			Title:       fmt.Sprintf("Add descriptions to %d collection%s", n, plural(n)),
+			Description: "Collection descriptions are a top signal for category (product search) queries. Start with the highest-traffic collections.",
+			Priority:    "high",
+			ImpactScore: min(20, n*3),
 		})
 	} else {
-		// No gap data yet — show highest content fix
-		var fixTitle, fixType string
-		var fixImpact int
-		err := db.QueryRow(ctx, `
-			SELECT title, fix_type, est_impact
-			FROM pending_fixes
-			WHERE merchant_id = $1
-			  AND status = 'pending'
-			  AND fix_layer = 'content'
-			ORDER BY est_impact DESC, created_at ASC
-			LIMIT 1
-		`, merchantID).Scan(&fixTitle, &fixType, &fixImpact)
-		if err == nil {
+		products, _ := GetProductsNeedingAttention(ctx, db, merchantID, 50)
+		missingMaterial := 0
+		for _, p := range products {
+			if p.MissingMaterialInfo {
+				missingMaterial++
+			}
+		}
+		if missingMaterial > 0 {
 			actions = append(actions, NextAction{
-				Priority: 2,
-				Type:     "fix",
-				Title:    fixTitle,
-				Why:      fmt.Sprintf("This %s improvement targets the queries AI is using to compare brands in your category", fixType),
-				Impact:   fmt.Sprintf("+%d pts estimated", fixImpact),
+				Type:        "content",
+				Title:       fmt.Sprintf("%d product%s missing material info", missingMaterial, plural(missingMaterial)),
+				Description: "Material is required for AI product understanding and many buyer prompts. Fix your top sellers first.",
+				Priority:    "medium",
+				ImpactScore: min(15, missingMaterial*2),
 			})
+		} else {
+			// Highest-opportunity content gap from actual scan data
+			var gapQuery string
+			var competitorCount int
+			err2 := db.QueryRow(ctx, `
+				WITH latest AS (
+					SELECT MAX(scanned_at) AS ts FROM citation_records WHERE merchant_id = $1
+				),
+				per_query AS (
+					SELECT
+						c.query,
+						COUNT(DISTINCT lower(regexp_replace(trim(comp->>'name'), '\s+', ' ', 'g')))
+							FILTER (WHERE comp->>'name' IS NOT NULL AND comp->>'name' != ''
+								AND array_length(regexp_split_to_array(trim(comp->>'name'), '\s+'), 1) <= 4
+								AND lower(comp->>'name') NOT LIKE '%best%'
+								AND lower(comp->>'name') NOT LIKE '%top%'
+								AND lower(comp->>'name') NOT LIKE '%under $%'
+								AND lower(comp->>'name') NOT LIKE '%rated%'
+								AND lower(comp->>'name') NOT LIKE '%brands%'
+								AND lower(comp->>'name') NOT LIKE '%store%'
+							)::int AS competitor_count,
+						bool_or(c.mentioned) AS any_mentioned
+					FROM citation_records c, latest
+					CROSS JOIN LATERAL jsonb_array_elements(
+						CASE WHEN jsonb_typeof(c.competitors) = 'array' THEN c.competitors ELSE '[]'::jsonb END
+					) AS comp
+					WHERE c.merchant_id = $1
+					  AND c.scanned_at = latest.ts
+					GROUP BY c.query
+				)
+				SELECT query, competitor_count
+				FROM per_query
+				WHERE NOT any_mentioned AND competitor_count >= 2
+				ORDER BY competitor_count DESC
+				LIMIT 1
+			`, merchantID).Scan(&gapQuery, &competitorCount)
+			if err2 == nil && gapQuery != "" {
+				actions = append(actions, NextAction{
+					Type:        "content",
+					Title:       fmt.Sprintf("Create content for: \"%s\"", gapQuery),
+					Description: fmt.Sprintf("AI named %d competitors for this exact query — it knows the topic. Add a page or FAQ section targeting this query so you appear too.", competitorCount),
+					Priority:    "medium",
+					ImpactScore: min(12, competitorCount*2),
+				})
+			}
 		}
 	}
 
@@ -906,21 +929,29 @@ func GetNextActions(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 
 	if mentionedPlatforms == 0 {
 		actions = append(actions, NextAction{
-			Priority: 3,
-			Type:     "authority",
-			Title:    "Get your brand mentioned in one trusted external source",
-			Why:      "AI has no third-party evidence your brand exists. One press mention, directory listing, or editorial citation changes this — and it compounds over time.",
-			Impact:   "Foundational — no external mentions = no AI trust",
+			Type:        "authority",
+			Title:       "Get your brand mentioned in one trusted external source",
+			Description: "AI has no third-party evidence your brand exists. One press mention, directory listing, or editorial citation is the unlock.",
+			Priority:    "high",
+			ImpactScore: 10,
 		})
 	} else {
 		actions = append(actions, NextAction{
-			Priority: 3,
-			Type:     "authority",
-			Title:    "Earn backlinks from category-specific publications",
-			Why:      fmt.Sprintf("You appear on %d of 3 platforms. Brands cited in editorial content get picked up by the platforms where you're still invisible.", mentionedPlatforms),
-			Impact:   "Compounds over time — each mention widens platform reach",
+			Type:        "authority",
+			Title:       "Earn backlinks from category-specific publications",
+			Description: fmt.Sprintf("You appear on %d of 3 platforms. External mentions expand reach to the platforms where you're still invisible.", mentionedPlatforms),
+			Priority:    "low",
+			ImpactScore: 5,
 		})
 	}
 
+	if len(actions) > 3 {
+		actions = actions[:3]
+	}
+	if actions == nil {
+		actions = []NextAction{}
+	}
 	return actions, nil
+
+	// (Old logic below removed.)
 }

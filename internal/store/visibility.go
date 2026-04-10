@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,6 +18,23 @@ type VisibilityScore struct {
 	QueriesHit       int       `json:"queries_hit"`
 	NegativeMentions int       `json:"negative_mentions"`
 	ScoreDate        time.Time `json:"score_date"`
+
+	// New presentation fields (additive; keep legacy fields above for compatibility).
+	OverallScore int                `json:"overall_score"`
+	TotalQueries int                `json:"total_queries"`
+	Mentioned    int                `json:"mentioned"`
+	Breakdown    VisibilityBreakdown `json:"breakdown"`
+}
+
+type VisibilityBreakdown struct {
+	Branded  QueryTypeScore `json:"branded"`
+	Category QueryTypeScore `json:"category"`
+}
+
+type QueryTypeScore struct {
+	Score     int `json:"score"` // 0–100 (sentiment-weighted, consistent with overall score)
+	Total     int `json:"total"`
+	Mentioned int `json:"mentioned"` // positive + neutral mentions (negative excluded), consistent with queries_hit
 }
 
 // DailyScore is used for the trend chart (one row per day per platform aggregated to date).
@@ -135,6 +151,13 @@ type rawCompetitorRow struct {
 	GeminiPos      *int
 }
 
+func scoreFromWeight(weightSum float64, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	return int(math.Round((weightSum / float64(total)) * 100))
+}
+
 // GetVisibilityScores returns the latest visibility score per platform within N days.
 func GetVisibilityScores(ctx context.Context, db *pgxpool.Pool, merchantID int64, days int) ([]VisibilityScore, error) {
 	rows, err := db.Query(ctx, `
@@ -156,6 +179,57 @@ func GetVisibilityScores(ctx context.Context, db *pgxpool.Pool, merchantID int64
 		if err := rows.Scan(&s.Platform, &s.Score, &s.QueriesRun, &s.QueriesHit, &s.NegativeMentions, &s.ScoreDate); err != nil {
 			return nil, err
 		}
+
+		// Populate additive fields for the dashboard's split presentation.
+		s.OverallScore = s.Score
+		s.TotalQueries = s.QueriesRun
+		s.Mentioned = s.QueriesHit
+
+		// Compute branded vs category breakdown from raw citation records for the same date.
+		var (
+			brandedTotal, categoryTotal               int
+			brandedMentioned, categoryMentioned       int
+			brandedWeightSum, categoryWeightSum       float64
+		)
+		_ = db.QueryRow(ctx, `
+			SELECT
+				COUNT(*) FILTER (WHERE query_type = 'brand')::int AS branded_total,
+				SUM(CASE WHEN query_type = 'brand' AND mentioned AND (sentiment IS NULL OR sentiment != 'negative') THEN 1 ELSE 0 END)::int AS branded_mentioned,
+				COALESCE(SUM(CASE
+					WHEN query_type = 'brand' AND mentioned AND sentiment = 'positive' THEN 1.0
+					WHEN query_type = 'brand' AND mentioned AND (sentiment = 'neutral' OR sentiment = '' OR sentiment IS NULL) THEN 0.5
+					ELSE 0.0
+				END), 0)::float8 AS branded_weight_sum,
+
+				COUNT(*) FILTER (WHERE query_type != 'brand')::int AS category_total,
+				SUM(CASE WHEN query_type != 'brand' AND mentioned AND (sentiment IS NULL OR sentiment != 'negative') THEN 1 ELSE 0 END)::int AS category_mentioned,
+				COALESCE(SUM(CASE
+					WHEN query_type != 'brand' AND mentioned AND sentiment = 'positive' THEN 1.0
+					WHEN query_type != 'brand' AND mentioned AND (sentiment = 'neutral' OR sentiment = '' OR sentiment IS NULL) THEN 0.5
+					ELSE 0.0
+				END), 0)::float8 AS category_weight_sum
+			FROM citation_records
+			WHERE merchant_id = $1
+			  AND platform = $2
+			  AND scanned_at = $3
+		`, merchantID, s.Platform, s.ScoreDate).Scan(
+			&brandedTotal, &brandedMentioned, &brandedWeightSum,
+			&categoryTotal, &categoryMentioned, &categoryWeightSum,
+		)
+
+		s.Breakdown = VisibilityBreakdown{
+			Branded: QueryTypeScore{
+				Score:     scoreFromWeight(brandedWeightSum, brandedTotal),
+				Total:     brandedTotal,
+				Mentioned: brandedMentioned,
+			},
+			Category: QueryTypeScore{
+				Score:     scoreFromWeight(categoryWeightSum, categoryTotal),
+				Total:     categoryTotal,
+				Mentioned: categoryMentioned,
+			},
+		}
+
 		scores = append(scores, s)
 	}
 	return scores, rows.Err()
@@ -237,7 +311,8 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 		),
 		expanded AS (
 			SELECT
-				comp->>'name'                             AS name,
+				lower(regexp_replace(trim(comp->>'name'), '\s+', ' ', 'g')) AS normalized_name,
+				trim(comp->>'name')                                          AS raw_name,
 				s.platform,
 				COALESCE((comp->>'position')::int, 0)    AS position
 			FROM scan_base s
@@ -248,7 +323,8 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 		),
 		grouped AS (
 			SELECT
-				name,
+				normalized_name,
+				MAX(raw_name)                                                AS display_name,
 				COALESCE(array_agg(DISTINCT platform), ARRAY[]::text[])  AS platforms,
 				COALESCE(MIN(CASE WHEN position > 0 THEN position END), 0) AS best_position,
 				COUNT(*)::int                                              AS total_frequency,
@@ -257,10 +333,10 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 				MIN(CASE WHEN platform = 'perplexity' AND position > 0 THEN position END) AS perplexity_pos,
 				MIN(CASE WHEN platform = 'gemini'     AND position > 0 THEN position END) AS gemini_pos
 			FROM expanded
-			GROUP BY name
+			GROUP BY normalized_name
 		)
 		SELECT
-			g.name,
+			g.display_name,
 			g.platforms,
 			g.best_position,
 			g.total_frequency,
@@ -301,7 +377,7 @@ func GetCompetitors(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 	topQueriesMap, err := competitorTopQueries(ctx, db, merchantID)
 	if err == nil {
 		for i := range result {
-			if qs, ok := topQueriesMap[result[i].Name]; ok {
+			if qs, ok := topQueriesMap[normalizeCompetitorName(result[i].Name)]; ok {
 				result[i].TopQueries = qs
 			}
 		}
@@ -315,7 +391,7 @@ func competitorTopQueries(ctx context.Context, db *pgxpool.Pool, merchantID int6
 	rows, err := db.Query(ctx, `
 		WITH expanded AS (
 			SELECT
-				comp->>'name' AS comp_name,
+				lower(regexp_replace(trim(comp->>'name'), '\s+', ' ', 'g')) AS comp_name,
 				query,
 				COUNT(*) AS cnt
 			FROM citation_records
@@ -325,7 +401,11 @@ func competitorTopQueries(ctx context.Context, db *pgxpool.Pool, merchantID int6
 			WHERE merchant_id = $1
 			  AND scanned_at >= CURRENT_DATE - interval '30 days'
 			  AND comp->>'name' IS NOT NULL AND comp->>'name' != ''
-			GROUP BY comp->>'name', query
+			  AND array_length(regexp_split_to_array(trim(comp->>'name'), '\s+'), 1) <= 4
+			  AND lower(comp->>'name') NOT LIKE '%best%'
+			  AND lower(comp->>'name') NOT LIKE '%top%'
+			  AND lower(comp->>'name') NOT LIKE '%under $%'
+			GROUP BY comp_name, query
 		),
 		ranked AS (
 			SELECT comp_name, query, cnt,
@@ -369,7 +449,12 @@ func scoreAndFilterCompetitors(rows []rawCompetitorRow, weights map[string]float
 
 	var scored []ScoredCompetitor
 	for _, r := range rows {
-		nameLower := strings.ToLower(strings.TrimSpace(r.Name))
+		nameLower := normalizeCompetitorName(r.Name)
+
+		// Filter query-like strings leaking in as competitors.
+		if looksLikeQueryCompetitor(r.Name) {
+			continue
+		}
 
 		// Classify and filter: marketplace and platform entries are never competitors.
 		// Retailers are kept but labelled — they're real competition in a different category.
@@ -378,10 +463,7 @@ func scoreAndFilterCompetitors(rows []rawCompetitorRow, weights map[string]float
 			continue
 		}
 
-		// Hard-filter: product descriptions masquerading as brand names (> 4 words)
-		if len(strings.Fields(r.Name)) > 4 {
-			continue
-		}
+		// (Word-count filter handled by looksLikeQueryCompetitor.)
 
 		// Composite score
 		//   50% frequency       — how often they're cited (primary signal)

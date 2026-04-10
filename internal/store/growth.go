@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -182,24 +181,91 @@ func pipelineMessage(step int, contentDone, _, _ bool) string {
 // their first AI citation. Unlike fixes (which improve the store), quick wins target
 // external signals — the factor AI uses most to decide who to recommend.
 type QuickWin struct {
-	Type     string `json:"type"`     // "social" | "directory" | "content" | "outreach"
-	Title    string `json:"title"`
-	Action   string `json:"action"`   // Exact thing to do
-	Template string `json:"template"` // Copy-paste ready, empty if not applicable
-	Timeline string `json:"timeline"` // "24h" | "48h" | "1 week"
-	Impact   string `json:"impact"`
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Copy      string   `json:"copy"`
+	ActionURL string   `json:"action_url"`
+	Tags      []string `json:"tags"`
+	Effort    string   `json:"effort"` // "15 min" | "30 min" | "1 hr" etc
 }
 
 // GetQuickWins returns 4–5 specific actions the merchant can take immediately
 // to get their first external citation — the step that unlocks AI visibility.
 // brandName and category come from the merchant record (caller-supplied).
 func GetQuickWins(ctx context.Context, db *pgxpool.Pool, merchantID int64, brandName, category string) ([]QuickWin, error) {
-	// Pull top query gap (most competitors cited = highest opportunity)
+	// Build quick wins from real merchant gaps (audit + scan-derived).
+	var wins []QuickWin
+
+	// 1) Collections needing descriptions (highest leverage for category queries).
+	collections, _ := GetCollectionsEligibleForFix(ctx, db, merchantID)
+	if n := len(collections); n > 0 {
+		wins = append(wins, QuickWin{
+			ID:        "collections_descriptions",
+			Title:     fmt.Sprintf("Add descriptions to %d collection%s", n, plural(n)),
+			Copy:      "Collection descriptions are a top signal for category (product search) queries. Add 2–3 sentences describing materials, use-cases, and who it’s for.",
+			ActionURL: "/dashboard/fixes",
+			Tags:      []string{"category_visibility", "collections"},
+			Effort:    "30–60 min",
+		})
+	}
+
+	// 2) Products missing critical attributes (e.g., material) and low completeness.
+	products, _ := GetProductsNeedingAttention(ctx, db, merchantID, 50)
+	missingMaterial := 0
+	for _, p := range products {
+		if p.MissingMaterialInfo {
+			missingMaterial++
+		}
+	}
+	if missingMaterial > 0 {
+		wins = append(wins, QuickWin{
+			ID:        "products_material_info",
+			Title:     fmt.Sprintf("%d product%s missing material info", missingMaterial, plural(missingMaterial)),
+			Copy:      "Material is required for AI product understanding (and many buyer prompts). Add it to product descriptions and specs for your top sellers first.",
+			ActionURL: "/dashboard/audit",
+			Tags:      []string{"product_data", "category_visibility"},
+			Effort:    "15–45 min",
+		})
+	}
+
+	// 3) Placeholder FAQ / policy content (hurts trust + answerability).
+	pages, _ := GetPagesEligibleForFix(ctx, db, merchantID)
+	faqPlaceholder := false
+	for _, pg := range pages {
+		if pg.PageType == "faq" && pg.IsPlaceholder {
+			faqPlaceholder = true
+			break
+		}
+	}
+	if faqPlaceholder {
+		wins = append(wins, QuickWin{
+			ID:        "faq_placeholders",
+			Title:     "FAQ page contains placeholder text",
+			Copy:      "Replace placeholders with real shipping/returns/materials policies. Buyer-intent questions are where AI decides whether to cite you.",
+			ActionURL: "/dashboard/settings",
+			Tags:      []string{"trust", "faq"},
+			Effort:    "20–30 min",
+		})
+	}
+
+	// 4) Use actual scan gaps to suggest a specific content target.
 	var topGapQuery string
 	_ = db.QueryRow(ctx, `
 		WITH latest AS (SELECT MAX(scanned_at) AS ts FROM citation_records WHERE merchant_id = $1),
 		gaps AS (
-			SELECT c.query, COUNT(DISTINCT comp->>'name')::int AS comp_count, bool_or(c.mentioned) AS any_mentioned
+			SELECT
+				c.query,
+				COUNT(DISTINCT lower(regexp_replace(trim(comp->>'name'), '\s+', ' ', 'g')))
+					FILTER (WHERE comp->>'name' IS NOT NULL AND comp->>'name' != ''
+						AND array_length(regexp_split_to_array(trim(comp->>'name'), '\s+'), 1) <= 4
+						AND lower(comp->>'name') NOT LIKE '%best%'
+						AND lower(comp->>'name') NOT LIKE '%top%'
+						AND lower(comp->>'name') NOT LIKE '%under $%'
+						AND lower(comp->>'name') NOT LIKE '%rated%'
+						AND lower(comp->>'name') NOT LIKE '%brands%'
+						AND lower(comp->>'name') NOT LIKE '%store%'
+					)::int AS comp_count,
+				bool_or(c.mentioned) AS any_mentioned
 			FROM citation_records c, latest
 			CROSS JOIN LATERAL jsonb_array_elements(
 				CASE WHEN jsonb_typeof(c.competitors) = 'array' THEN c.competitors ELSE '[]'::jsonb END
@@ -209,147 +275,32 @@ func GetQuickWins(ctx context.Context, db *pgxpool.Pool, merchantID int64, brand
 		)
 		SELECT query FROM gaps WHERE NOT any_mentioned ORDER BY comp_count DESC LIMIT 1
 	`, merchantID).Scan(&topGapQuery)
-
-	// Pull top competitor name
-	var topCompetitor string
-	_ = db.QueryRow(ctx, `
-		SELECT comp->>'name'
-		FROM citation_records
-		CROSS JOIN LATERAL jsonb_array_elements(
-			CASE WHEN jsonb_typeof(competitors) = 'array' THEN competitors ELSE '[]'::jsonb END
-		) AS comp
-		WHERE merchant_id = $1
-		  AND scanned_at >= CURRENT_DATE - interval '30 days'
-		  AND comp->>'name' IS NOT NULL AND comp->>'name' != ''
-		GROUP BY comp->>'name'
-		ORDER BY COUNT(*) DESC
-		LIMIT 1
-	`, merchantID).Scan(&topCompetitor)
-
-	cat := strings.ToLower(category)
-	if cat == "" {
-		cat = "products"
-	}
-
-	var wins []QuickWin
-
-	// Win 1: Reddit post — fastest, Perplexity indexes Reddit aggressively
-	subreddit, redditTemplate := redditQuickWin(cat, brandName, topGapQuery)
-	wins = append(wins, QuickWin{
-		Type:     "social",
-		Title:    fmt.Sprintf("Post in r/%s (Perplexity indexes Reddit fast)", subreddit),
-		Action:   fmt.Sprintf("Post a genuine question or recommendation in r/%s that naturally mentions %s", subreddit, brandName),
-		Template: redditTemplate,
-		Timeline: "24h",
-		Impact:   "Perplexity sonar picks up Reddit within 24–48h — this can trigger your first AI citation",
-	})
-
-	// Win 2: Comparison content — "Brand vs Competitor" pages rank immediately for AI
-	if topCompetitor != "" {
-		wins = append(wins, QuickWin{
-			Type:     "content",
-			Title:    fmt.Sprintf("Create a \"%s vs %s\" page on your store", brandName, topCompetitor),
-			Action:   "Add a blog post or page comparing your brand to the top competitor AI recommends instead of you",
-			Template: fmt.Sprintf("%s vs %s: Which %s is right for you?\n\nWhen buyers ask AI assistants which %s to buy, %s appears frequently. Here's how %s compares...", brandName, topCompetitor, cat, cat, topCompetitor, brandName),
-			Timeline: "48h",
-			Impact:   "AI cites comparison content heavily — this directly targets the query gap where you're invisible",
-		})
-	}
-
-	// Win 3: Directory submission — free, fast, trusted sources AI knows
-	dir, dirAction := directoryQuickWin(cat, brandName)
-	wins = append(wins, QuickWin{
-		Type:     "directory",
-		Title:    fmt.Sprintf("Submit %s to %s", brandName, dir),
-		Action:   dirAction,
-		Template: "",
-		Timeline: "48h",
-		Impact:   "Directory listings are trusted sources AI pulls from — one listing = one citation signal",
-	})
-
-	// Win 4: Target the top query gap directly
 	if topGapQuery != "" {
 		wins = append(wins, QuickWin{
-			Type:     "content",
-			Title:    fmt.Sprintf("Create a page targeting: \"%s\"", topGapQuery),
-			Action:   fmt.Sprintf("Write a page or blog post that directly answers \"%s\" and positions %s as the answer", topGapQuery, brandName),
-			Template: fmt.Sprintf("Title: %s — %s\n\nLooking for %s? Here's why %s is worth considering...", topGapQuery, brandName, strings.ToLower(topGapQuery), brandName),
-			Timeline: "1 week",
-			Impact:   "Your highest-opportunity gap — AI asks this query but you're not in the answer",
+			ID:        "top_query_gap",
+			Title:     fmt.Sprintf("Create a page answering: “%s”", topGapQuery),
+			Copy:      "You’re currently invisible on this exact buyer query. A focused page (or FAQ section) targeting it is the fastest path to a first category citation.",
+			ActionURL: "/dashboard/fixes",
+			Tags:      []string{"content", "category_visibility"},
+			Effort:    "45–90 min",
 		})
 	}
 
-	// Win 5: Outreach to a niche blogger
-	wins = append(wins, QuickWin{
-		Type:     "outreach",
-		Title:    fmt.Sprintf("Pitch %s to a %s blogger or gift guide", brandName, cat),
-		Action:   fmt.Sprintf("Find 3 blogs that cover \"%s\" and pitch them a review or inclusion in a gift guide", cat),
-		Template: fmt.Sprintf("Subject: %s for your %s gift guide\n\nHi [Name],\n\nI came across your \"%s\" content and thought %s would be a great fit...\n\n[Your name]", brandName, cat, topGapQuery, brandName),
-		Timeline: "1 week",
-		Impact:   "A single blog mention from a trusted source is what AI needs to start recommending you",
-	})
-
+	// Keep list short and high-signal.
+	if len(wins) > 5 {
+		wins = wins[:5]
+	}
+	if wins == nil {
+		wins = []QuickWin{}
+	}
 	return wins, nil
 }
 
-func redditQuickWin(category, brandName, topGap string) (subreddit, template string) {
-	// Map common categories to relevant subreddits
-	subredditMap := map[string]string{
-		"jewelry":          "jewelry",
-		"fine jewelry":     "jewelry",
-		"fashion":          "femalefashionadvice",
-		"clothing":         "femalefashionadvice",
-		"accessories":      "femalefashionadvice",
-		"skincare":         "SkincareAddiction",
-		"beauty":           "MakeupAddiction",
-		"home decor":       "malelivingspace",
-		"furniture":        "malelivingspace",
-		"coffee":           "coffee",
-		"food":             "food",
-		"tech":             "gadgets",
-		"electronics":      "gadgets",
+func plural(n int) string {
+	if n == 1 {
+		return ""
 	}
-
-	sub := "BuyItForLife" // default — suits most DTC brands
-	for k, v := range subredditMap {
-		if strings.Contains(category, k) {
-			sub = v
-			break
-		}
-	}
-
-	question := topGap
-	if question == "" {
-		question = fmt.Sprintf("best %s brands", category)
-	}
-
-	tmpl := fmt.Sprintf(
-		"Title: %s — found %s\n\nHey, been looking for %s for a while and finally tried %s. Really impressed with the quality — has anyone else tried them? Curious how they compare to the bigger names.",
-		question, brandName, category, brandName,
-	)
-
-	return sub, tmpl
-}
-
-func directoryQuickWin(category, brandName string) (directory, action string) {
-	// Category-specific directories AI models trust
-	dirMap := map[string]struct{ dir, action string }{
-		"jewelry":    {"The Knot Marketplace", fmt.Sprintf("Submit %s at theknot.com/marketplace — The Knot is heavily indexed by all three AI platforms for jewelry recommendations", brandName)},
-		"fine jewelry": {"The Knot Marketplace", fmt.Sprintf("Submit %s at theknot.com/marketplace — The Knot is heavily indexed by all three AI platforms for jewelry recommendations", brandName)},
-		"skincare":   {"Influenster", fmt.Sprintf("Create a brand profile for %s on Influenster — Perplexity frequently cites Influenster reviews", brandName)},
-		"clothing":   {"Fashionista", fmt.Sprintf("Submit %s to Fashionista's brand directory — fashion AI queries frequently pull from Fashionista", brandName)},
-		"home decor": {"Houzz", fmt.Sprintf("List %s products on Houzz — AI home decor recommendations frequently cite Houzz", brandName)},
-		"coffee":     {"Coffeereview.com", fmt.Sprintf("Submit %s for a review on coffeereview.com — cited in most AI coffee queries", brandName)},
-	}
-
-	for k, v := range dirMap {
-		if strings.Contains(category, k) {
-			return v.dir, v.action
-		}
-	}
-
-	// Default: Trustpilot — universally trusted, cited by all AI platforms
-	return "Trustpilot", fmt.Sprintf("Create a free Trustpilot profile for %s and collect 5+ reviews — Trustpilot is cited by ChatGPT, Perplexity, and Gemini across almost every product category", brandName)
+	return "s"
 }
 
 // ─── Scan Progress (Before / After) ─────────────────────────────────────────

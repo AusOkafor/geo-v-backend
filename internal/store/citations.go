@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/austinokafor/geo-backend/internal/platform"
@@ -126,7 +127,16 @@ func GetQueryGaps(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]Qu
 				array_agg(DISTINCT platform ORDER BY platform)          AS platforms,
 				bool_or(mentioned)                                      AS any_mentioned,
 				-- Count distinct competitor names across all platforms for this query
-				COUNT(DISTINCT comp->>'name')::int                      AS competitor_count
+				COUNT(DISTINCT lower(regexp_replace(trim(comp->>'name'), '\s+', ' ', 'g')))
+					FILTER (WHERE comp->>'name' IS NOT NULL AND comp->>'name' != ''
+						AND array_length(regexp_split_to_array(trim(comp->>'name'), '\s+'), 1) <= 4
+						AND lower(comp->>'name') NOT LIKE '%best%'
+						AND lower(comp->>'name') NOT LIKE '%top%'
+						AND lower(comp->>'name') NOT LIKE '%under $%'
+						AND lower(comp->>'name') NOT LIKE '%rated%'
+						AND lower(comp->>'name') NOT LIKE '%brands%'
+						AND lower(comp->>'name') NOT LIKE '%store%'
+					)::int AS competitor_count
 			FROM recent
 			LEFT JOIN LATERAL jsonb_array_elements(
 				CASE WHEN jsonb_typeof(competitors) = 'array' THEN competitors ELSE '[]'::jsonb END
@@ -333,7 +343,15 @@ func buildRecognitionReasons(tier string, mentioned, total int) []string {
 // Uses ON CONFLICT DO NOTHING so re-running a scan on the same day is safe.
 func StoreCompetitorMentions(ctx context.Context, db *pgxpool.Pool, merchantID int64, r platform.CitationResult) error {
 	for _, c := range r.Competitors {
-		if c.Name == "" {
+		name := strings.TrimSpace(c.Name)
+		if name == "" {
+			continue
+		}
+		if looksLikeQueryCompetitor(name) {
+			continue
+		}
+		cls := classifyCompetitor(normalizeCompetitorName(name))
+		if cls == classMarketplace || cls == classPlatform {
 			continue
 		}
 		_, err := db.Exec(ctx, `
@@ -342,7 +360,7 @@ func StoreCompetitorMentions(ctx context.Context, db *pgxpool.Pool, merchantID i
 				 competitor_pos, merchant_mentioned, merchant_pos)
 			VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT ON CONSTRAINT uq_competitor_mention DO NOTHING
-		`, merchantID, r.Platform, r.Query, c.Name, c.Position, r.Mentioned, r.Position)
+		`, merchantID, r.Platform, r.Query, name, c.Position, r.Mentioned, r.Position)
 		if err != nil {
 			return err
 		}
@@ -362,7 +380,7 @@ type CompetitorGapEntry struct {
 func GetCompetitorGaps(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]CompetitorGapEntry, error) {
 	rows, err := db.Query(ctx, `
 		SELECT
-			competitor_name,
+			MAX(competitor_name)                              AS competitor_name,
 			COUNT(DISTINCT query_text)                            AS queries_lost,
 			array_agg(DISTINCT platform ORDER BY platform)       AS platforms
 		FROM competitor_mentions
@@ -371,7 +389,14 @@ func GetCompetitorGaps(ctx context.Context, db *pgxpool.Pool, merchantID int64) 
 		  AND scan_date = (
 			SELECT MAX(scan_date) FROM competitor_mentions WHERE merchant_id = $1
 		  )
-		GROUP BY competitor_name
+		  AND array_length(regexp_split_to_array(trim(competitor_name), '\s+'), 1) <= 4
+		  AND lower(competitor_name) NOT LIKE '%best%'
+		  AND lower(competitor_name) NOT LIKE '%top%'
+		  AND lower(competitor_name) NOT LIKE '%under $%'
+		  AND lower(competitor_name) NOT LIKE '%rated%'
+		  AND lower(competitor_name) NOT LIKE '%brands%'
+		  AND lower(competitor_name) NOT LIKE '%store%'
+		GROUP BY lower(regexp_replace(trim(competitor_name), '\s+', ' ', 'g'))
 		ORDER BY queries_lost DESC
 		LIMIT 10
 	`, merchantID)

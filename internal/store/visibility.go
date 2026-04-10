@@ -927,27 +927,7 @@ func GetNextActions(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 		  AND scanned_at >= CURRENT_DATE - interval '30 days'
 	`, merchantID).Scan(&mentionedPlatforms)
 
-	// Also check authority-layer fix completion (directory listings, merchant center, etc.)
-	var authorityDone, authorityTotal int
-	_ = db.QueryRow(ctx, `
-		SELECT
-			COUNT(*) FILTER (WHERE status IN ('applied','manual'))::int AS done,
-			COUNT(*) FILTER (WHERE status != 'rejected')::int           AS total
-		FROM pending_fixes
-		WHERE merchant_id = $1
-		  AND fix_layer = 'authority'
-	`, merchantID).Scan(&authorityDone, &authorityTotal)
-
-	if authorityTotal > 0 && authorityDone < authorityTotal {
-		remaining := authorityTotal - authorityDone
-		actions = append(actions, NextAction{
-			Type:        "authority",
-			Title:       fmt.Sprintf("Complete %d authority task%s (%d/%d done)", remaining, plural(remaining), authorityDone, authorityTotal),
-			Description: "Authority tasks (directory listings, Merchant Center, reviews) create third‑party signals AI uses to trust and cite you.",
-			Priority:    "high",
-			ImpactScore: min(12, remaining*3),
-		})
-	} else if mentionedPlatforms == 0 {
+	if mentionedPlatforms == 0 {
 		actions = append(actions, NextAction{
 			Type:        "authority",
 			Title:       "Get your brand mentioned in one trusted external source",
@@ -958,10 +938,10 @@ func GetNextActions(ctx context.Context, db *pgxpool.Pool, merchantID int64) ([]
 	} else {
 		actions = append(actions, NextAction{
 			Type:        "authority",
-			Title:       "Earn one category-specific mention this week",
-			Description: fmt.Sprintf("You appear on %d of 3 platforms. One high-quality mention (blog, directory, editorial) helps expand to the platform(s) where you're still invisible.", mentionedPlatforms),
-			Priority:    "medium",
-			ImpactScore: 7,
+			Title:       "Earn backlinks from category-specific publications",
+			Description: fmt.Sprintf("You appear on %d of 3 platforms. External mentions expand reach to the platforms where you're still invisible.", mentionedPlatforms),
+			Priority:    "low",
+			ImpactScore: 5,
 		})
 	}
 

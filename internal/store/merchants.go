@@ -10,31 +10,33 @@ import (
 
 // Merchant mirrors the merchants table.
 type Merchant struct {
-	ID              int64
-	ShopDomain      string
-	AccessTokenEnc  string
-	Scope           string
-	Plan            string
-	Active          bool
-	BrandName       string   // derived from shop domain or stored separately
-	Category        string   // product category — set during onboarding
-	SocialLinks     []string // sameAs URLs (Instagram, TikTok, etc.)
-	InstalledAt     time.Time
-	UninstalledAt   *time.Time
+	ID                 int64
+	ShopDomain         string
+	AccessTokenEnc     string
+	Scope              string
+	Plan               string
+	Active             bool
+	BrandName          string   // derived from shop domain or stored separately
+	Category           string   // product category — set during onboarding
+	PricePositioning   string   // budget | mid-range | premium | luxury
+	UniqueSellingPoint string   // max 200 chars; used in fix/pitch generation
+	SocialLinks        []string // sameAs URLs (Instagram, TikTok, etc.)
+	InstalledAt        time.Time
+	UninstalledAt      *time.Time
 }
 
 // GetMerchant fetches a merchant by primary key.
 func GetMerchant(ctx context.Context, db *pgxpool.Pool, id int64) (*Merchant, error) {
 	var m Merchant
-	var dbBrandName, dbCategory *string
+	var dbBrandName, dbCategory, dbPricePositioning, dbUniqueSellingPoint *string
 	err := db.QueryRow(ctx, `
 		SELECT id, shop_domain, access_token_enc, scope, plan, active, installed_at, uninstalled_at,
-		       brand_name, category, social_links
+		       brand_name, category, price_positioning, unique_selling_point, social_links
 		FROM merchants WHERE id = $1
 	`, id).Scan(
 		&m.ID, &m.ShopDomain, &m.AccessTokenEnc, &m.Scope,
 		&m.Plan, &m.Active, &m.InstalledAt, &m.UninstalledAt,
-		&dbBrandName, &dbCategory, &m.SocialLinks,
+		&dbBrandName, &dbCategory, &dbPricePositioning, &dbUniqueSellingPoint, &m.SocialLinks,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store.GetMerchant: %w", err)
@@ -47,6 +49,12 @@ func GetMerchant(ctx context.Context, db *pgxpool.Pool, id int64) (*Merchant, er
 	if dbCategory != nil {
 		m.Category = *dbCategory
 	}
+	if dbPricePositioning != nil {
+		m.PricePositioning = *dbPricePositioning
+	}
+	if dbUniqueSellingPoint != nil {
+		m.UniqueSellingPoint = *dbUniqueSellingPoint
+	}
 	if m.SocialLinks == nil {
 		m.SocialLinks = []string{}
 	}
@@ -56,15 +64,15 @@ func GetMerchant(ctx context.Context, db *pgxpool.Pool, id int64) (*Merchant, er
 // GetMerchantByDomain fetches a merchant by Shopify shop domain.
 func GetMerchantByDomain(ctx context.Context, db *pgxpool.Pool, domain string) (*Merchant, error) {
 	var m Merchant
-	var dbBrandName, dbCategory *string
+	var dbBrandName, dbCategory, dbPricePositioning, dbUniqueSellingPoint *string
 	err := db.QueryRow(ctx, `
 		SELECT id, shop_domain, access_token_enc, scope, plan, active, installed_at, uninstalled_at,
-		       brand_name, category, social_links
+		       brand_name, category, price_positioning, unique_selling_point, social_links
 		FROM merchants WHERE shop_domain = $1
 	`, domain).Scan(
 		&m.ID, &m.ShopDomain, &m.AccessTokenEnc, &m.Scope,
 		&m.Plan, &m.Active, &m.InstalledAt, &m.UninstalledAt,
-		&dbBrandName, &dbCategory, &m.SocialLinks,
+		&dbBrandName, &dbCategory, &dbPricePositioning, &dbUniqueSellingPoint, &m.SocialLinks,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store.GetMerchantByDomain: %w", err)
@@ -76,6 +84,12 @@ func GetMerchantByDomain(ctx context.Context, db *pgxpool.Pool, domain string) (
 	}
 	if dbCategory != nil {
 		m.Category = *dbCategory
+	}
+	if dbPricePositioning != nil {
+		m.PricePositioning = *dbPricePositioning
+	}
+	if dbUniqueSellingPoint != nil {
+		m.UniqueSellingPoint = *dbUniqueSellingPoint
 	}
 	if m.SocialLinks == nil {
 		m.SocialLinks = []string{}
@@ -92,12 +106,13 @@ func UpdateSocialLinks(ctx context.Context, db *pgxpool.Pool, id int64, links []
 	return err
 }
 
-// UpdateMerchantProfile saves the merchant's brand name and product category.
-func UpdateMerchantProfile(ctx context.Context, db *pgxpool.Pool, id int64, brandName, category string) error {
+// UpdateMerchantProfile saves the merchant's brand name, product category, and brand profile fields.
+func UpdateMerchantProfile(ctx context.Context, db *pgxpool.Pool, id int64, brandName, category, pricePositioning, uniqueSellingPoint string) error {
 	_, err := db.Exec(ctx, `
-		UPDATE merchants SET brand_name = $1, category = $2, updated_at = now()
-		WHERE id = $3
-	`, brandName, category, id)
+		UPDATE merchants
+		SET brand_name = $1, category = $2, price_positioning = $3, unique_selling_point = $4, updated_at = now()
+		WHERE id = $5
+	`, brandName, category, pricePositioning, uniqueSellingPoint, id)
 	return err
 }
 

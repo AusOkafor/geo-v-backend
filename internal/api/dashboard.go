@@ -32,13 +32,15 @@ func (h *Handler) GetMerchant(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "merchant not found")
 	}
 	return c.JSON(http.StatusOK, map[string]any{
-		"id":          m.ID,
-		"shop_domain": m.ShopDomain,
-		"brand_name":  m.BrandName,
-		"category":    m.Category,
-		"plan":        m.Plan,
-		"active":      m.Active,
-		"installed_at": m.InstalledAt,
+		"id":                   m.ID,
+		"shop_domain":          m.ShopDomain,
+		"brand_name":           m.BrandName,
+		"category":             m.Category,
+		"price_positioning":    m.PricePositioning,
+		"unique_selling_point": m.UniqueSellingPoint,
+		"plan":                 m.Plan,
+		"active":               m.Active,
+		"installed_at":         m.InstalledAt,
 	})
 }
 
@@ -48,13 +50,15 @@ func (h *Handler) UpdateMerchant(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized)
 	}
 	var body struct {
-		BrandName string `json:"brand_name"`
-		Category  string `json:"category"`
+		BrandName          string `json:"brand_name"`
+		Category           string `json:"category"`
+		PricePositioning   string `json:"price_positioning"`
+		UniqueSellingPoint string `json:"unique_selling_point"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
 	}
-	if err := store.UpdateMerchantProfile(c.Request().Context(), h.DB, m.ID, body.BrandName, body.Category); err != nil {
+	if err := store.UpdateMerchantProfile(c.Request().Context(), h.DB, m.ID, body.BrandName, body.Category, body.PricePositioning, body.UniqueSellingPoint); err != nil {
 		return err
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
